@@ -1,8 +1,6 @@
 # Web frameworks
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
-flask>=3.0.0
-werkzeug>=3.0.0
 
 # Database
 sqlalchemy[asyncio]>=2.0.0

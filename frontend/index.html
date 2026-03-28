@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kupas — Platform Edukasi AI Kemdikdasmen</title>
+  <style>
+    /* ── Reset & Variables ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --accent: #f59e0b;
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
+      --shadow-hover: 0 4px 8px rgba(0,0,0,.10), 0 8px 24px rgba(0,0,0,.10);
+    }
+
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .logo {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: var(--primary);
+      letter-spacing: -0.02em;
+      flex-shrink: 0;
+    }
+
+    .logo span { color: var(--accent); }
+
+    .tagline {
+      font-size: 0.875rem;
+      color: var(--muted);
+      display: none;
+    }
+
+    @media (min-width: 640px) { .tagline { display: block; } }
+
+    /* ── Hero ── */
+    .hero {
+      background: linear-gradient(135deg, #1e40af 0%, #2563eb 50%, #0ea5e9 100%);
+      color: #fff;
+      padding: 3.5rem 1.5rem;
+      text-align: center;
+    }
+
+    .hero h1 {
+      font-size: clamp(1.75rem, 4vw, 2.75rem);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 0.75rem;
+    }
+
+    .hero p {
+      font-size: 1.0625rem;
+      opacity: 0.88;
+      max-width: 540px;
+      margin: 0 auto 2rem;
+    }
+
+    /* ── Search ── */
+    .search-wrap {
+      max-width: 560px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    .search-wrap svg {
+      position: absolute;
+      left: 1rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 20px;
+      height: 20px;
+      stroke: var(--muted);
+      fill: none;
+      pointer-events: none;
+    }
+
+    #search-input {
+      width: 100%;
+      padding: 0.8rem 1rem 0.8rem 2.8rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 9999px;
+      outline: none;
+      box-shadow: 0 2px 12px rgba(0,0,0,.2);
+      color: var(--text);
+    }
+
+    #search-input::placeholder { color: var(--muted); }
+
+    /* ── Main content ── */
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem;
+    }
+
+    /* ── Filters ── */
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1.75rem;
+    }
+
+    .filter-label {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: var(--muted);
+      align-self: center;
+      margin-right: 0.25rem;
+    }
+
+    .chip {
+      padding: 0.3125rem 0.875rem;
+      border-radius: 9999px;
+      border: 1.5px solid var(--border);
+      background: var(--surface);
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all .15s;
+      color: var(--muted);
+    }
+
+    .chip:hover { border-color: var(--primary); color: var(--primary); }
+    .chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+    .divider {
+      width: 1px;
+      height: 24px;
+      background: var(--border);
+      align-self: center;
+      margin: 0 0.25rem;
+    }
+
+    /* ── State messages ── */
+    #status {
+      text-align: center;
+      color: var(--muted);
+      padding: 3rem 0;
+      font-size: 0.9375rem;
+    }
+
+    /* ── Book grid ── */
+    #book-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1.25rem;
+    }
+
+    /* ── Book card ── */
+    .book-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: box-shadow .2s, transform .2s;
+      cursor: pointer;
+    }
+
+    .book-card:hover {
+      box-shadow: var(--shadow-hover);
+      transform: translateY(-3px);
+    }
+
+    .book-cover {
+      width: 100%;
+      aspect-ratio: 3/4;
+      object-fit: cover;
+      background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2.5rem;
+      flex-shrink: 0;
+    }
+
+    .book-cover img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .book-info {
+      padding: 0.875rem;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .book-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .book-meta {
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-size: 0.7rem;
+      font-weight: 600;
+      margin-top: 0.25rem;
+    }
+
+    .btn-kupas {
+      width: 100%;
+      padding: 0.5rem;
+      margin-top: 0.625rem;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }
+
+    .btn-kupas:hover { background: var(--primary-dark); }
+
+    /* ── Modal ── */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.45);
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s;
+    }
+
+    .modal-backdrop.open {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .modal {
+      background: var(--surface);
+      border-radius: 16px;
+      width: 100%;
+      max-width: 680px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,.25);
+      transform: translateY(20px);
+      transition: transform .2s;
+    }
+
+    .modal-backdrop.open .modal { transform: translateY(0); }
+
+    .modal-header {
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      z-index: 1;
+    }
+
+    .modal-cover {
+      width: 72px;
+      height: 96px;
+      border-radius: 8px;
+      object-fit: cover;
+      background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.75rem;
+      overflow: hidden;
+    }
+
+    .modal-cover img { width: 100%; height: 100%; object-fit: cover; }
+
+    .modal-meta h2 {
+      font-size: 1.0625rem;
+      font-weight: 700;
+      line-height: 1.3;
+      margin-bottom: 0.25rem;
+    }
+
+    .modal-meta p { font-size: 0.8125rem; color: var(--muted); margin-bottom: 0.25rem; }
+
+    .modal-close {
+      margin-left: auto;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0.25rem;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .modal-close:hover { color: var(--text); }
+
+    .modal-body { padding: 1.5rem; }
+
+    .modal-body h3 {
+      font-size: 0.9375rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .modal-body h3::before {
+      content: '';
+      display: block;
+      width: 4px;
+      height: 18px;
+      background: var(--primary);
+      border-radius: 2px;
+    }
+
+    .summary-box {
+      background: #f0f9ff;
+      border: 1px solid #bae6fd;
+      border-radius: 10px;
+      padding: 1rem 1.125rem;
+      font-size: 0.9rem;
+      line-height: 1.7;
+      color: #0c4a6e;
+      margin-bottom: 1.5rem;
+      white-space: pre-wrap;
+    }
+
+    .question-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .question-item {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.875rem 1rem;
+      font-size: 0.875rem;
+      line-height: 1.6;
+    }
+
+    .loader {
+      text-align: center;
+      padding: 2rem 0;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 36px;
+      height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loader p { margin-top: 0.75rem; font-size: 0.875rem; color: var(--muted); }
+
+    .error-box {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 10px;
+      padding: 1rem;
+      color: #991b1b;
+      font-size: 0.875rem;
+    }
+
+    /* ── Footer ── */
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      font-size: 0.8125rem;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header>
+  <div class="header-inner">
+    <div class="logo">Ku<span>pas</span></div>
+    <p class="tagline">Ringkasan & soal latihan dari buku Kemdikdasmen berbasis AI</p>
+  </div>
+</header>
+
+<!-- ── Hero ── -->
+<div class="hero">
+  <h1>Belajar Lebih Cerdas dengan AI 🎓</h1>
+  <p>Kupas buku-buku resmi Kemdikdasmen secara instan — dapatkan ringkasan dan soal latihan otomatis.</p>
+  <div class="search-wrap">
+    <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input id="search-input" type="search" placeholder="Cari judul buku, mata pelajaran…" autocomplete="off" />
+  </div>
+</div>
+
+<!-- ── Main ── -->
+<main>
+
+  <!-- Filters -->
+  <div class="filters">
+    <span class="filter-label">Jenjang:</span>
+    <button class="chip active" data-filter="grade" data-value="">Semua</button>
+    <button class="chip" data-filter="grade" data-value="SD">SD</button>
+    <button class="chip" data-filter="grade" data-value="SMP">SMP</button>
+    <button class="chip" data-filter="grade" data-value="SMA">SMA</button>
+    <div class="divider"></div>
+    <span class="filter-label">Mapel:</span>
+    <button class="chip active" data-filter="subject" data-value="">Semua</button>
+    <button class="chip" data-filter="subject" data-value="Matematika">Matematika</button>
+    <button class="chip" data-filter="subject" data-value="IPA">IPA</button>
+    <button class="chip" data-filter="subject" data-value="IPS">IPS</button>
+    <button class="chip" data-filter="subject" data-value="Bahasa Indonesia">Bhs. Indonesia</button>
+    <button class="chip" data-filter="subject" data-value="Bahasa Inggris">Bhs. Inggris</button>
+    <button class="chip" data-filter="subject" data-value="PPKn">PPKn</button>
+  </div>
+
+  <div id="status">Memuat daftar buku…</div>
+  <div id="book-grid" hidden></div>
+
+</main>
+
+<!-- ── Footer ── -->
+<footer>
+  &copy; 2024 Kupas · Platform edukasi AI dari buku resmi Kemdikdasmen
+</footer>
+
+<!-- ── Detail Modal ── -->
+<div class="modal-backdrop" id="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-cover" id="modal-cover">📚</div>
+      <div class="modal-meta">
+        <h2 id="modal-title">—</h2>
+        <p id="modal-author"></p>
+        <p id="modal-grade-subject"></p>
+      </div>
+      <button class="modal-close" id="modal-close" aria-label="Tutup">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body" id="modal-body">
+      <div class="loader"><div class="spinner"></div><p>Sedang memuat…</p></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Config ──
+  const API_BASE = '';  // same origin; set to e.g. 'http://localhost:8000' for local dev
+
+  // ── State ──
+  let allBooks = [];
+  let activeFilters = { grade: '', subject: '' };
+
+  // ── Fetch books ──
+  async function loadBooks() {
+    try {
+      const res = await fetch(`${API_BASE}/books`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      allBooks = await res.json();
+      renderBooks();
+    } catch (err) {
+      document.getElementById('status').textContent = `Gagal memuat buku: ${err.message}`;
+    }
+  }
+
+  // ── Render book grid ──
+  function renderBooks() {
+    const query = document.getElementById('search-input').value.toLowerCase();
+    const { grade, subject } = activeFilters;
+
+    const filtered = allBooks.filter(b => {
+      const matchQuery = !query ||
+        (b.title || '').toLowerCase().includes(query) ||
+        (b.subject || '').toLowerCase().includes(query) ||
+        (b.author || '').toLowerCase().includes(query);
+      const matchGrade = !grade || (b.grade || '').includes(grade);
+      const matchSubject = !subject || (b.subject || '').toLowerCase().includes(subject.toLowerCase());
+      return matchQuery && matchGrade && matchSubject;
+    });
+
+    const status = document.getElementById('status');
+    const grid = document.getElementById('book-grid');
+
+    if (filtered.length === 0) {
+      status.textContent = 'Tidak ada buku yang cocok dengan filter ini.';
+      status.hidden = false;
+      grid.hidden = true;
+      return;
+    }
+
+    status.hidden = true;
+    grid.hidden = false;
+    grid.innerHTML = filtered.map(book => bookCardHTML(book)).join('');
+
+    grid.querySelectorAll('.btn-kupas').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        openModal(btn.dataset.slug, allBooks.find(b => b.slug === btn.dataset.slug));
+      });
+    });
+
+    grid.querySelectorAll('.book-card').forEach(card => {
+      card.addEventListener('click', () => {
+        openModal(card.dataset.slug, allBooks.find(b => b.slug === card.dataset.slug));
+      });
+    });
+  }
+
+  function bookCardHTML(book) {
+    const coverHTML = book.cover_url
+      ? `<img src="${escHtml(book.cover_url)}" alt="${escHtml(book.title || '')}" loading="lazy" onerror="this.parentElement.textContent='📚'">`
+      : '📚';
+    return `
+      <div class="book-card" data-slug="${escHtml(book.slug)}" tabindex="0" role="button"
+           aria-label="${escHtml(book.title || book.slug)}">
+        <div class="book-cover">${coverHTML}</div>
+        <div class="book-info">
+          <div class="book-title">${escHtml(book.title || book.slug)}</div>
+          ${book.author ? `<div class="book-meta">${escHtml(book.author)}</div>` : ''}
+          ${book.grade ? `<span class="badge">${escHtml(book.grade)}</span>` : ''}
+          ${book.subject ? `<div class="book-meta">${escHtml(book.subject)}</div>` : ''}
+          <button class="btn-kupas" data-slug="${escHtml(book.slug)}">✨ Kupas</button>
+        </div>
+      </div>`;
+  }
+
+  // ── Modal ──
+  function openModal(slug, book) {
+    const backdrop = document.getElementById('modal-backdrop');
+    const cover = document.getElementById('modal-cover');
+    const title = document.getElementById('modal-title');
+    const author = document.getElementById('modal-author');
+    const gradeSubject = document.getElementById('modal-grade-subject');
+    const body = document.getElementById('modal-body');
+
+    if (book) {
+      if (book.cover_url) {
+        cover.innerHTML = `<img src="${escHtml(book.cover_url)}" alt="" onerror="this.parentElement.textContent='📚'">`;
+      } else {
+        cover.textContent = '📚';
+      }
+      title.textContent = book.title || slug;
+      author.textContent = book.author ? `✍️ ${book.author}` : '';
+      gradeSubject.textContent = [book.grade, book.subject].filter(Boolean).join(' · ');
+    }
+
+    body.innerHTML = `<div class="loader"><div class="spinner"></div><p>Menganalisis buku dengan AI…</p></div>`;
+    backdrop.classList.add('open');
+    document.body.style.overflow = 'hidden';
+
+    fetchGenerate(slug, body);
+  }
+
+  function closeModal() {
+    document.getElementById('modal-backdrop').classList.remove('open');
+    document.body.style.overflow = '';
+  }
+
+  async function fetchGenerate(slug, bodyEl) {
+    try {
+      const res = await fetch(`${API_BASE}/generate/${encodeURIComponent(slug)}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+
+      const questionsHTML = (data.questions || []).map((q, i) =>
+        `<li class="question-item"><strong>${i + 1}.</strong> ${escHtml(q)}</li>`
+      ).join('');
+
+      bodyEl.innerHTML = `
+        <h3>Ringkasan</h3>
+        <div class="summary-box">${escHtml(data.summary)}</div>
+        <h3>Soal Latihan</h3>
+        <ul class="question-list">${questionsHTML || '<li class="question-item">Tidak ada soal tersedia.</li>'}</ul>`;
+    } catch (err) {
+      bodyEl.innerHTML = `<div class="error-box">⚠️ Gagal memuat konten AI: ${escHtml(err.message)}</div>`;
+    }
+  }
+
+  // ── Filters ──
+  document.querySelectorAll('.chip[data-filter]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const filter = chip.dataset.filter;
+      const value = chip.dataset.value;
+      activeFilters[filter] = value;
+      document.querySelectorAll(`.chip[data-filter="${filter}"]`).forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      renderBooks();
+    });
+  });
+
+  // ── Search ──
+  document.getElementById('search-input').addEventListener('input', renderBooks);
+
+  // ── Close modal ──
+  document.getElementById('modal-close').addEventListener('click', closeModal);
+  document.getElementById('modal-backdrop').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+  // ── Utility ──
+  function escHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Boot ──
+  loadBooks();
+</script>
+</body>
+</html>
