@@ -18,3 +18,6 @@ google-generativeai>=0.7.0
 
 # Environment variables
 python-dotenv>=1.0.0
+
+# Form parsing (required for FastAPI Form() parameters in admin panel)
+python-multipart>=0.0.9

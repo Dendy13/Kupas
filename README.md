@@ -1,12 +1,22 @@
 # Kupas
 
-**Kupas** adalah platform edukasi berbasis web untuk mengunduh dan mempelajari ebook dari [buku.kemendikdasmen.go.id](https://buku.kemendikdasmen.go.id).
+**Kupas** adalah platform edukasi berbasis web untuk menjelajahi, mengunduh, dan mempelajari ebook dari [buku.kemendikdasmen.go.id](https://buku.kemendikdasmen.go.id).
 
 Fitur utama:
-- 📥 **Download ebook** langsung dari URL PDF Kemdikdasmen
-- 📂 **Kelola ebook** yang sudah tersimpan secara lokal
-- 🤖 **Generate soal latihan** dari ebook menggunakan Google Gemini AI (atau soal generik jika API key tidak tersedia)
-- 🔌 **REST API** berbasis FastAPI untuk integrasi dengan sistem lain
+- 📚 **Katalog buku** — jelajahi buku resmi Kemdikdasmen berdasarkan jenjang & mata pelajaran
+- 🤖 **Ringkasan & soal latihan** — generate otomatis menggunakan Google Gemini AI
+- 🔌 **REST API** berbasis FastAPI dengan database PostgreSQL
+- 🕷️ **Pipeline crawler** — ambil katalog, unduh PDF, dan ekstrak teks per bab
+
+---
+
+## Prasyarat
+
+Pastikan kamu sudah menginstal:
+
+- **Python 3.11+**
+- **PostgreSQL 14+** (berjalan secara lokal atau di server)
+- *(Opsional)* **Google Gemini API Key** — untuk fitur ringkasan & soal latihan AI
 
 ---
 
@@ -14,39 +24,49 @@ Fitur utama:
 
 ```
 Kupas/
-├── app.py                          # Flask web app (UI)
+├── frontend/
+│   └── index.html              # Antarmuka web (static HTML)
+├── kupas/
+│   ├── __init__.py             # Helper: download_ebook, generate_questions
+│   ├── api/
+│   │   └── main.py             # FastAPI REST API
+│   ├── crawler/
+│   │   ├── fetch_catalog.py    # Ambil katalog buku dari API Kemdikdasmen
+│   │   └── download_pdf.py     # Unduh PDF ke database & storage
+│   ├── processor/
+│   │   └── extract_text.py     # Ekstrak teks per bab dari PDF
+│   └── storage/
+│       └── pdf/                # Penyimpanan file PDF
 ├── requirements.txt
-├── .env.example
-├── ebooks/                         # Folder penyimpanan PDF yang diunduh
-├── templates/
-│   ├── index.html                  # Halaman utama
-│   └── questions.html              # Halaman soal latihan
-└── kupas/
-    ├── __init__.py                 # Helper: download_ebook, generate_questions
-    ├── api/
-    │   └── main.py                 # FastAPI REST API
-    ├── crawler/
-    │   ├── fetch_catalog.py        # Ambil katalog buku dari API Kemdikdasmen
-    │   └── download_pdf.py         # Unduh PDF ke database & storage
-    ├── processor/
-    │   └── extract_text.py         # Ekstrak teks per bab dari PDF
-    └── storage/
-        └── pdf/                    # Penyimpanan PDF untuk FastAPI pipeline
+└── .env.example
 ```
 
 ---
 
-## Cara Menjalankan (Flask Web App)
+## Cara Menjalankan (Development)
 
-### 1. Siapkan environment
+### 1. Clone & siapkan environment
 
 ```bash
+git clone https://github.com/Dendy13/Kupas.git
+cd Kupas
+
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Konfigurasi (opsional)
+### 2. Siapkan database PostgreSQL
+
+Buat database baru untuk Kupas:
+
+```bash
+psql -U postgres -c "CREATE DATABASE kupas;"
+```
+
+> Jika PostgreSQL menggunakan user/password berbeda, sesuaikan di langkah berikutnya.
+
+### 3. Konfigurasi environment
 
 Salin `.env.example` ke `.env` dan sesuaikan nilainya:
 
@@ -54,42 +74,75 @@ Salin `.env.example` ke `.env` dan sesuaikan nilainya:
 cp .env.example .env
 ```
 
+Edit file `.env`:
+
+```env
+# Ganti user, password, host, dan port sesuai setup PostgreSQL kamu
+DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/kupas
+
+# (Opsional) Isi dengan API key dari https://aistudio.google.com
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-1.5-flash
+
+# URL API katalog Kemdikdasmen (tidak perlu diubah)
+CATALOG_API_URL=https://api.buku.cloudapp.web.id/getPenggerakTextBooks
+DETAIL_API_URL=https://api.buku.cloudapp.web.id/getDetails
+
+# Folder penyimpanan PDF
+PDF_STORAGE_DIR=kupas/storage/pdf
+```
+
 | Variabel | Keterangan | Default |
 |---|---|---|
-| `GEMINI_API_KEY` | API key Google Gemini untuk generate soal | *(kosong → soal generik)* |
-| `GEMINI_MODEL` | Model Gemini yang digunakan | `gemini-pro` |
-| `EBOOKS_DIR` | Folder penyimpanan ebook | `ebooks` |
-| `FLASK_SECRET_KEY` | Secret key Flask | `kupas-secret-key` |
+| `DATABASE_URL` | Koneksi ke PostgreSQL | `postgresql+asyncpg://user:password@localhost:5432/kupas` |
+| `GEMINI_API_KEY` | API key Google Gemini (opsional) | *(kosong → endpoint `/generate` tidak aktif)* |
+| `GEMINI_MODEL` | Model Gemini yang digunakan | `gemini-1.5-flash` |
+| `CATALOG_API_URL` | Endpoint API katalog Kemdikdasmen | sudah diisi |
+| `DETAIL_API_URL` | Endpoint API detail buku | sudah diisi |
+| `PDF_STORAGE_DIR` | Folder penyimpanan PDF | `kupas/storage/pdf` |
 
-### 3. Jalankan aplikasi
+### 4. Jalankan API
 
 ```bash
-python app.py
+uvicorn kupas.api.main:app --reload --port 8000
 ```
 
-Buka browser di **http://localhost:8000**.
+API akan otomatis membuat tabel database saat pertama kali dijalankan.
+
+Dokumentasi interaktif tersedia di **http://localhost:8000/docs**.
+
+### 5. Jalankan pipeline data (isi database)
+
+```bash
+# Ambil katalog buku dari API Kemdikdasmen (simpan ke database)
+python -m kupas.crawler.fetch_catalog
+
+# Unduh PDF untuk semua buku (atau satu buku tertentu)
+python -m kupas.crawler.download_pdf
+python -m kupas.crawler.download_pdf --slug nama-slug
+
+# Ekstrak teks per bab dari PDF
+python -m kupas.processor.extract_text
+python -m kupas.processor.extract_text --slug nama-slug
+```
+
+> ⚠️ Proses download & ekstrak bisa memakan waktu cukup lama tergantung jumlah buku.
+
+### 6. Buka frontend
+
+Buka file `frontend/index.html` langsung di browser, atau serve dengan server statis sederhana:
+
+```bash
+python -m http.server 3000 --directory frontend
+```
+
+Lalu buka **http://localhost:3000**.
+
+> Pastikan API sudah berjalan di port 8000 karena frontend mengakses `/books` dan `/generate/{slug}` dari origin yang sama. Untuk development, kamu bisa edit variabel `API_BASE` di bagian atas `frontend/index.html` menjadi `http://localhost:8000`.
 
 ---
 
-## Cara Menggunakan
-
-1. **Download ebook** — Tempel URL PDF dari situs Kemdikdasmen ke kolom input, klik *Download*.
-2. **Lihat daftar ebook** — Ebook yang sudah diunduh tampil di bagian bawah.
-3. **Generate soal** — Klik tombol *Generate Soal* di samping ebook yang ingin dipelajari.
-
----
-
-## REST API (FastAPI)
-
-Selain web app, tersedia juga REST API berbasis FastAPI dengan koneksi ke database PostgreSQL.
-
-### Menjalankan API
-
-```bash
-uvicorn kupas.api.main:app --reload --port 8001
-```
-
-### Endpoint
+## Endpoint API
 
 | Method | Path | Deskripsi |
 |---|---|---|
@@ -97,24 +150,154 @@ uvicorn kupas.api.main:app --reload --port 8001
 | `GET` | `/books/{slug}` | Detail buku beserta bab |
 | `GET` | `/generate/{slug}` | Ringkasan & soal dari Gemini AI |
 
-Dokumentasi interaktif tersedia di **http://localhost:8001/docs**.
+---
+
+## Deployment
+
+### 🖥️ VPS (Direkomendasikan)
+
+Deployment di VPS (misalnya DigitalOcean, Linode, AWS EC2) memberikan kontrol penuh dan cocok untuk aplikasi ini karena membutuhkan penyimpanan PDF dan proses crawler yang berjalan lama.
+
+#### 1. Persiapan server
+
+```bash
+# Update package list
+sudo apt update && sudo apt upgrade -y
+
+# Install Python, pip, dan PostgreSQL
+sudo apt install -y python3.11 python3.11-venv python3-pip postgresql postgresql-contrib nginx
+```
+
+#### 2. Setup database
+
+```bash
+sudo -u postgres psql -c "CREATE USER kupas_user WITH PASSWORD 'ganti_password_ini';"
+sudo -u postgres psql -c "CREATE DATABASE kupas OWNER kupas_user;"
+```
+
+#### 3. Clone & konfigurasi aplikasi
+
+```bash
+git clone https://github.com/Dendy13/Kupas.git /opt/kupas
+cd /opt/kupas
+
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env
+nano .env  # sesuaikan DATABASE_URL dan GEMINI_API_KEY
+```
+
+#### 4. Isi database
+
+```bash
+source .venv/bin/activate
+python -m kupas.crawler.fetch_catalog
+python -m kupas.crawler.download_pdf
+python -m kupas.processor.extract_text
+```
+
+#### 5. Jalankan API sebagai service (systemd)
+
+Buat file `/etc/systemd/system/kupas.service`:
+
+```ini
+[Unit]
+Description=Kupas FastAPI
+After=network.target postgresql.service
+
+[Service]
+User=www-data
+WorkingDirectory=/opt/kupas
+EnvironmentFile=/opt/kupas/.env
+ExecStart=/opt/kupas/.venv/bin/uvicorn kupas.api.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now kupas
+```
+
+#### 6. Konfigurasi Nginx
+
+Buat file `/etc/nginx/sites-available/kupas`:
+
+```nginx
+server {
+    listen 80;
+    server_name domain-kamu.com;  # ganti dengan domain/IP kamu
+
+    # Serve frontend statis
+    root /opt/kupas/frontend;
+    index index.html;
+
+    # Proxy ke FastAPI untuk permintaan API
+    location ~ ^/(books|generate) {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/kupas /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+#### 7. (Opsional) HTTPS dengan Let's Encrypt
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d domain-kamu.com
+```
 
 ---
 
-## Pipeline Data (Crawler + Processor)
+### ▲ Vercel (Alternatif — Dengan Keterbatasan)
 
-```bash
-# 1. Ambil katalog buku dari API Kemdikdasmen
-python -m kupas.crawler.fetch_catalog
+Vercel bisa digunakan untuk men-deploy **frontend** sebagai static site, dan **backend** sebagai serverless function. Namun ada beberapa keterbatasan penting yang perlu dipertimbangkan.
 
-# 2. Unduh PDF untuk semua buku (atau satu buku)
-python -m kupas.crawler.download_pdf
-python -m kupas.crawler.download_pdf --slug nama-slug
+#### Cara deploy ke Vercel
 
-# 3. Ekstrak teks per bab dari PDF
-python -m kupas.processor.extract_text
-python -m kupas.processor.extract_text --slug nama-slug
+**Frontend** dapat langsung di-deploy ke Vercel karena hanya berupa file HTML statis.
+
+**Backend (FastAPI)** membutuhkan konfigurasi tambahan. Buat file `vercel.json` di root proyek:
+
+```json
+{
+  "builds": [
+    { "src": "kupas/api/main.py", "use": "@vercel/python" }
+  ],
+  "routes": [
+    { "src": "/(books|generate)(.*)", "dest": "kupas/api/main.py" },
+    { "src": "/(.*)", "dest": "frontend/index.html" }
+  ]
+}
 ```
+
+Tambahkan environment variable di dashboard Vercel:
+- `DATABASE_URL` — gunakan PostgreSQL eksternal (misalnya [Neon](https://neon.tech) atau [Supabase](https://supabase.com))
+- `GEMINI_API_KEY`
+
+#### ⚠️ Keterbatasan Vercel (dibanding VPS)
+
+| Aspek | VPS | Vercel |
+|---|---|---|
+| **Timeout eksekusi** | Tidak terbatas | 10 detik (hobby) / 60 detik (pro) — download & ekstrak PDF akan gagal |
+| **Penyimpanan file** | Bebas (disk server) | ❌ Tidak ada persistent storage — PDF tidak bisa disimpan |
+| **Crawler pipeline** | Bisa dijalankan kapan saja | ❌ Tidak bisa — tidak ada background worker |
+| **Database** | PostgreSQL lokal | Wajib pakai layanan eksternal berbayar/freemium |
+| **Cold start** | Tidak ada | Ada (delay ~1–3 detik saat pertama request) |
+| **Kontrol server** | Penuh | Tidak ada akses ke server |
+| **Biaya** | Sesuai spec VPS | Gratis untuk traffic rendah, berbayar untuk lebih |
+
+**Kesimpulan:** Vercel cocok hanya jika kamu ingin demo/prototype frontend + API sederhana dengan data yang sudah ada di database eksternal. Untuk penggunaan nyata (crawler, download PDF, proses ekstraksi), **VPS jauh lebih tepat**.
 
 ---
 
