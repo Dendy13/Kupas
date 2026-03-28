@@ -34,6 +34,7 @@ env/
 
 # Storage / downloads
 kupas/storage/pdf/*.pdf
+ebooks/*.pdf
 
 # Logs
 *.log
