@@ -62,14 +62,14 @@ async def create_tables() -> None:
 
 async def fetch_catalog() -> list[dict]:
     """Fetch the full book catalog from the Kemdikdasmen API."""
-    params = {"limit": 2000, "type": "pdf", "order_by": "updated_at"}
+    url = f"{CATALOG_API_URL}?limit=2000&type=pdf&order_by=updated_at"
     async with httpx.AsyncClient(timeout=60) as client:
         logger.info("Fetching catalog from %s …", CATALOG_API_URL)
-        response = await client.get(CATALOG_API_URL, params=params)
+        response = await client.get(url)
         response.raise_for_status()
         data = response.json()
 
-    books: list[dict] = data if isinstance(data, list) else data.get("data", [])
+    books: list[dict] = data if isinstance(data, list) else data.get("data") or data.get("results") or []
     logger.info("Fetched %d books from catalog.", len(books))
     return books
 
@@ -88,19 +88,19 @@ async def upsert_books(books: list[dict]) -> None:
 
             if existing:
                 existing.title = item.get("title") or item.get("nama_buku")
-                existing.author = item.get("author") or item.get("penulis")
+                existing.author = item.get("writer") or item.get("author") or item.get("penulis")
                 existing.subject = item.get("subject") or item.get("mata_pelajaran")
-                existing.grade = item.get("grade") or item.get("kelas")
-                existing.cover_url = item.get("cover") or item.get("cover_url")
+                existing.grade = item.get("class") or item.get("grade") or item.get("kelas")
+                existing.cover_url = item.get("image") or item.get("cover") or item.get("cover_url")
                 existing.updated_at = datetime.now(timezone.utc)
             else:
                 book = Book(
                     slug=str(slug),
                     title=item.get("title") or item.get("nama_buku"),
-                    author=item.get("author") or item.get("penulis"),
+                    author=item.get("writer") or item.get("author") or item.get("penulis"),
                     subject=item.get("subject") or item.get("mata_pelajaran"),
-                    grade=item.get("grade") or item.get("kelas"),
-                    cover_url=item.get("cover") or item.get("cover_url"),
+                    grade=item.get("class") or item.get("grade") or item.get("kelas"),
+                    cover_url=item.get("image") or item.get("cover") or item.get("cover_url"),
                 )
                 session.add(book)
 

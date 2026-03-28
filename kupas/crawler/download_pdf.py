@@ -67,19 +67,21 @@ async def fetch_detail(slug: str) -> dict:
 
 def extract_pdf_url(detail: dict) -> str | None:
     """Extract the PDF download URL from the detail response."""
-    # The API returns "attachment" directly or nested under "data"
-    data = detail if "attachment" in detail else detail.get("data", detail)
-    return data.get("attachment") or data.get("pdf_url") or data.get("file_url")
+    results = detail.get("results") or detail.get("data") or detail
+    if not isinstance(results, dict):
+        return None
+    return results.get("attachment") or results.get("pdf_url") or results.get("file_url")
 
 
 async def download_pdf(slug: str, pdf_url: str) -> Path:
     """Stream-download the PDF and save it to storage. Returns the local path."""
     PDF_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     dest = PDF_STORAGE_DIR / f"{slug}.pdf"
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; Kupas/1.0; educational use)"}
 
     async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
         logger.info("Downloading PDF for '%s' from %s …", slug, pdf_url)
-        async with client.stream("GET", pdf_url) as response:
+        async with client.stream("GET", pdf_url, headers=headers) as response:
             response.raise_for_status()
             with dest.open("wb") as fh:
                 async for chunk in response.aiter_bytes(chunk_size=8192):
