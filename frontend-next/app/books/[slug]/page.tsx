@@ -6,15 +6,16 @@ import { getBook } from '@/lib/api'
 import GenerateSection from '@/components/GenerateSection'
 
 interface Props {
-  params: { slug: string }
+  params: Promise<{ slug: string }>
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { slug } = await params
   try {
-    const book = await getBook(params.slug)
+    const book = await getBook(slug)
     return {
-      title: `${book.title ?? params.slug} — Kupas`,
-      description: `Ringkasan dan soal latihan AI untuk buku "${book.title ?? params.slug}"`,
+      title: `${book.title ?? slug} — Kupas`,
+      description: `Ringkasan dan soal latihan AI untuk buku "${book.title ?? slug}"`,
     }
   } catch {
     return { title: 'Buku — Kupas' }
@@ -22,9 +23,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function BookDetailPage({ params }: Props) {
+  const { slug } = await params
   let book
   try {
-    book = await getBook(params.slug)
+    book = await getBook(slug)
   } catch (err) {
     const status = err instanceof Error && err.message.includes('404') ? 'not-found' : 'error'
     if (status === 'not-found') notFound()
