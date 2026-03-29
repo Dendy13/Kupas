@@ -17,6 +17,7 @@ Fitur utama:
 Pastikan kamu sudah menginstal:
 
 - **Python 3.11+**
+- **Node.js 18+** — untuk menjalankan `frontend-next` (Next.js)
 - **PostgreSQL 14+** (berjalan secara lokal atau di server)
 - **Docker & Docker Compose** *(opsional — untuk deployment satu perintah)*
 - *(Opsional)* **Google Gemini API Key** — untuk fitur ringkasan & soal latihan AI
@@ -27,8 +28,12 @@ Pastikan kamu sudah menginstal:
 
 ```
 Kupas/
-├── frontend/
-│   └── index.html              # Antarmuka web (static HTML)
+├── frontend-next/              # ✅ Frontend aktif — Next.js 15 + TypeScript + Tailwind CSS
+│   ├── app/                    #    Halaman & layout (App Router)
+│   ├── components/             #    Komponen React
+│   ├── types/                  #    TypeScript types
+│   ├── next.config.mjs
+│   └── package.json
 ├── kupas/
 │   ├── __init__.py             # Helper: download_ebook, generate_questions
 │   ├── api/
@@ -42,6 +47,8 @@ Kupas/
 │   │   └── extract_text.py     # Ekstrak teks per bab dari PDF
 │   └── storage/
 │       └── pdf/                # Penyimpanan file PDF
+├── frontend/                   # ⚠️  Legacy — static HTML satu halaman (vanilla JS)
+│   └── index.html              #    Hanya untuk referensi; gunakan frontend-next
 ├── deploy/
 │   ├── DEPLOYMENT_NOTES.md     # Panduan deployment VPS
 │   └── nginx-example.conf      # Contoh konfigurasi Nginx
@@ -51,6 +58,21 @@ Kupas/
 ├── requirements.txt
 └── .env.example
 ```
+
+> **`frontend/` vs `frontend-next/`**
+>
+> | | `frontend/` | `frontend-next/` |
+> |---|---|---|
+> | **Status** | ⚠️ Legacy | ✅ Aktif |
+> | **Teknologi** | HTML + CSS + vanilla JS (1 file) | Next.js 15, TypeScript, Tailwind CSS |
+> | **Deployment** | Serve statis / Nginx `root` | Vercel / Node.js standalone |
+> | **Konfigurasi** | Variabel di dalam `index.html` | `.env.local` → `NEXT_PUBLIC_API_URL` |
+>
+> **`frontend/` sudah tidak digunakan secara aktif.** Seluruh pengembangan dan deployment menggunakan `frontend-next/`. Direktori `frontend/` boleh dihapus dari repositori untuk menghindari kebingungan:
+> ```bash
+> git rm -r frontend/
+> git commit -m "remove: hapus frontend legacy (diganti frontend-next)"
+> ```
 
 ---
 
@@ -168,17 +190,31 @@ python -m kupas.processor.extract_text --slug nama-slug
 
 > ⚠️ Proses download & ekstrak bisa memakan waktu cukup lama tergantung jumlah buku.
 
-### 6. Buka frontend
+### 6. Jalankan frontend (frontend-next)
 
-Buka file `frontend/index.html` langsung di browser, atau serve dengan server statis sederhana:
+Masuk ke direktori `frontend-next`, install dependensi, lalu jalankan dev server:
 
 ```bash
-python -m http.server 3000 --directory frontend
+cd frontend-next
+npm install
+npm run dev
 ```
 
-Lalu buka **http://localhost:3000**.
+Buka **http://localhost:3000**.
 
-> Pastikan API sudah berjalan di port 8000 karena frontend mengakses `/books` dan `/generate/{slug}` dari origin yang sama. Untuk development, kamu bisa edit variabel `API_BASE` di bagian atas `frontend/index.html` menjadi `http://localhost:8000`.
+Buat file `.env.local` dari contoh yang tersedia:
+
+```bash
+cp .env.local.example .env.local
+```
+
+Edit `.env.local` dan arahkan ke API lokal kamu:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+> Pastikan API sudah berjalan di port 8000 karena frontend mengakses `/books` dan `/generate/{slug}`.
 
 ---
 
@@ -373,6 +409,39 @@ sudo systemctl enable --now kupas-api kupas-admin
 
 #### 6. Konfigurasi Nginx
 
+Frontend `frontend-next` berjalan sebagai proses Node.js tersendiri (port 3000). Nginx memproxy request ke frontend maupun ke API.
+
+Buat file `/etc/systemd/system/kupas-frontend.service`:
+
+```ini
+[Unit]
+Description=Kupas Frontend (Next.js)
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=/opt/kupas/frontend-next
+Environment=NODE_ENV=production
+Environment=NEXT_PUBLIC_API_URL=https://api.domain-kamu.com
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+> Sebelumnya, build dulu frontend-nya:
+> ```bash
+> cd /opt/kupas/frontend-next
+> npm install
+> npm run build
+> ```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now kupas-frontend
+```
+
 Buat file `/etc/nginx/sites-available/kupas`:
 
 ```nginx
@@ -380,9 +449,12 @@ server {
     listen 80;
     server_name domain-kamu.com;  # ganti dengan domain/IP kamu
 
-    # Serve frontend statis
-    root /opt/kupas/frontend;
-    index index.html;
+    # Proxy ke Next.js frontend
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
 
     # Proxy ke FastAPI untuk permintaan API
     location ~ ^/(books|generate) {
@@ -407,45 +479,56 @@ sudo certbot --nginx -d domain-kamu.com
 
 ---
 
-### ▲ Vercel (Alternatif — Dengan Keterbatasan)
+### ▲ Vercel (Frontend — Direkomendasikan untuk hosting frontend)
 
-Vercel bisa digunakan untuk men-deploy **frontend** sebagai static site, dan **backend** sebagai serverless function. Namun ada beberapa keterbatasan penting yang perlu dipertimbangkan.
+Vercel adalah platform yang dibuat oleh tim Next.js sehingga mendukung `frontend-next/` secara native. Deploy bisa dilakukan dalam beberapa langkah tanpa konfigurasi tambahan.
 
-#### Cara deploy ke Vercel
+#### Prasyarat
 
-**Frontend** dapat langsung di-deploy ke Vercel karena hanya berupa file HTML statis.
+- Backend (FastAPI) sudah berjalan dan dapat diakses publik (misalnya di VPS atau via Docker). Vercel hanya hosting frontend.
 
-**Backend (FastAPI)** membutuhkan konfigurasi tambahan. Buat file `vercel.json` di root proyek:
+#### Langkah deploy frontend-next ke Vercel
 
-```json
-{
-  "builds": [
-    { "src": "kupas/api/main.py", "use": "@vercel/python" }
-  ],
-  "routes": [
-    { "src": "/(books|generate)(.*)", "dest": "kupas/api/main.py" },
-    { "src": "/(.*)", "dest": "frontend/index.html" }
-  ]
-}
-```
+**1. Import repositori ke Vercel**
 
-Tambahkan environment variable di dashboard Vercel:
-- `DATABASE_URL` — gunakan PostgreSQL eksternal (misalnya [Neon](https://neon.tech) atau [Supabase](https://supabase.com))
-- `GEMINI_API_KEY`
+- Buka [vercel.com/new](https://vercel.com/new) dan pilih repositori `Kupas`.
 
-#### ⚠️ Keterbatasan Vercel (dibanding VPS)
+**2. Konfigurasi project**
 
-| Aspek | VPS | Vercel |
+Di halaman konfigurasi, ubah pengaturan berikut:
+
+| Pengaturan | Nilai |
+|---|---|
+| **Root Directory** | `frontend-next` |
+| **Framework Preset** | Next.js *(terdeteksi otomatis)* |
+| **Build Command** | `npm run build` *(default)* |
+| **Output Directory** | *(biarkan default)* |
+
+**3. Tambahkan environment variable**
+
+Klik **Environment Variables** dan tambahkan:
+
+| Key | Value | Contoh |
 |---|---|---|
-| **Timeout eksekusi** | Tidak terbatas | 10 detik (hobby) / 60 detik (pro) — download & ekstrak PDF akan gagal |
-| **Penyimpanan file** | Bebas (disk server) | ❌ Tidak ada persistent storage — PDF tidak bisa disimpan |
-| **Crawler pipeline** | Bisa dijalankan kapan saja | ❌ Tidak bisa — tidak ada background worker |
-| **Database** | PostgreSQL lokal | Wajib pakai layanan eksternal berbayar/freemium |
-| **Cold start** | Tidak ada | Ada (delay ~1–3 detik saat pertama request) |
-| **Kontrol server** | Penuh | Tidak ada akses ke server |
-| **Biaya** | Sesuai spec VPS | Gratis untuk traffic rendah, berbayar untuk lebih |
+| `NEXT_PUBLIC_API_URL` | URL backend API kamu (tanpa trailing slash) | `https://api.domain-kamu.com` |
 
-**Kesimpulan:** Vercel cocok hanya jika kamu ingin demo/prototype frontend + API sederhana dengan data yang sudah ada di database eksternal. Untuk penggunaan nyata (crawler, download PDF, proses ekstraksi), **VPS jauh lebih tepat**.
+> `NEXT_PUBLIC_API_URL` harus dapat diakses dari browser pengguna (bukan hanya dari server Vercel). Pastikan backend kamu memiliki CORS yang mengizinkan domain Vercel kamu.
+
+**4. Deploy**
+
+Klik **Deploy**. Vercel akan otomatis build dan deploy. Setiap `git push` ke branch utama akan men-trigger redeploy otomatis.
+
+**5. Konfigurasi CORS di backend**
+
+Tambahkan domain Vercel kamu ke `ADMIN_CORS_ORIGINS` di `.env` (untuk Admin JSON API). Untuk API utama (port 8000), pastikan origin frontend sudah diizinkan.
+
+Jika menggunakan VPS + Nginx, tambahkan header CORS di konfigurasi Nginx atau di kode FastAPI.
+
+#### ⚠️ Catatan penting
+
+- **Backend tidak di-deploy ke Vercel** — Vercel hanya untuk frontend Next.js.
+- Backend (FastAPI + PostgreSQL + crawler) tetap harus berjalan di VPS atau Docker karena memerlukan persistent storage dan proses background.
+- `frontend/` (HTML legacy) **tidak perlu di-deploy** — gunakan `frontend-next/` saja.
 
 ---
 
