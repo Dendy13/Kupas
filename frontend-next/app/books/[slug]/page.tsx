@@ -79,7 +79,7 @@ export default async function BookDetailPage({ params }: Props) {
         <div className="mb-8">
           <h2 className="text-base font-bold text-slate-700 mb-3">Daftar Bab</h2>
           <ul className="space-y-1.5">
-            {book.chapters.map((ch) => (
+            {book.chapters.map((ch: { id: number; chapter_number: number; title?: string }) => (
               <li
                 key={ch.id}
                 className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2"
