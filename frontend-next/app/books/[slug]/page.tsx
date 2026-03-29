@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getBook } from '@/lib/api'
 import GenerateSection from '@/components/GenerateSection'
+import type { BookDetail, Chapter } from '@/types'
 
 interface Props {
   params: Promise<{ slug: string }>
@@ -24,7 +25,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function BookDetailPage({ params }: Props) {
   const { slug } = await params
-  let book
+  let book: BookDetail
   try {
     book = await getBook(slug)
   } catch (err) {
@@ -79,7 +80,7 @@ export default async function BookDetailPage({ params }: Props) {
         <div className="mb-8">
           <h2 className="text-base font-bold text-slate-700 mb-3">Daftar Bab</h2>
           <ul className="space-y-1.5">
-            {book.chapters.map((ch) => (
+            {book.chapters.map((ch: Chapter) => (
               <li
                 key={ch.id}
                 className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2"
