@@ -1,11 +1,6 @@
 """
 main.py
 FastAPI application for the Kupas platform.
-
-Endpoints:
-    GET /books              — list all books
-    GET /books/{slug}       — book detail + chapters
-    GET /generate/{slug}    — AI-generated summary + practice questions via Gemini
 """
 
 import os
@@ -13,10 +8,12 @@ import re
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-import google.generativeai as genai
+# Beralih ke SDK yang baru
+from google import genai
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import Text, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -26,7 +23,7 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/kupas")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite") # Pakai model yang lebih efisien dan murah
 DETAIL_API_URL = os.getenv(
     "DETAIL_API_URL",
     "https://api.buku.cloudapp.web.id/getDetails",
@@ -34,18 +31,12 @@ DETAIL_API_URL = os.getenv(
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
-
 # ---------------------------------------------------------------------------
 # ORM Models
 # ---------------------------------------------------------------------------
 
-
 class Base(DeclarativeBase):
     pass
-
 
 class Book(Base):
     __tablename__ = "books"
@@ -60,7 +51,6 @@ class Book(Base):
     pdf_url: Mapped[str | None]
     pdf_path: Mapped[str | None]
 
-
 class Chapter(Base):
     __tablename__ = "chapters"
 
@@ -70,20 +60,16 @@ class Chapter(Base):
     title: Mapped[str | None]
     content: Mapped[str | None] = mapped_column(Text)
 
-
 # ---------------------------------------------------------------------------
 # Pydantic Schemas
 # ---------------------------------------------------------------------------
-
 
 class ChapterOut(BaseModel):
     id: int
     chapter_number: int
     title: str | None
     content: str | None
-
     model_config = {"from_attributes": True}
-
 
 class BookOut(BaseModel):
     id: int
@@ -93,24 +79,19 @@ class BookOut(BaseModel):
     subject: str | None
     grade: str | None
     cover_url: str | None
-
     model_config = {"from_attributes": True}
-
 
 class BookDetailOut(BookOut):
     chapters: list[ChapterOut] = []
-
 
 class GenerateOut(BaseModel):
     slug: str
     summary: str
     questions: list[str]
 
-
 # ---------------------------------------------------------------------------
 # App lifespan
 # ---------------------------------------------------------------------------
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -119,7 +100,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
     await engine.dispose()
 
-
 app = FastAPI(
     title="Kupas API",
     description="Platform edukasi — ringkasan & soal latihan dari buku Kemdikdasmen",
@@ -127,11 +107,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
-
 
 async def get_book_or_404(session: AsyncSession, slug: str) -> Book:
     result = await session.execute(select(Book).where(Book.slug == slug))
@@ -140,19 +118,21 @@ async def get_book_or_404(session: AsyncSession, slug: str) -> Book:
         raise HTTPException(status_code=404, detail=f"Book '{slug}' not found.")
     return book
 
-
 async def fetch_remote_detail(slug: str) -> dict:
-    """Fetch book detail from upstream API (used as fallback)."""
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(DETAIL_API_URL, params={"slug": slug})
         resp.raise_for_status()
         return resp.json()
 
-
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
+# Tambahan Rute Root untuk mencegah 404 Not Found
+@app.get("/", include_in_schema=False)
+async def root():
+    # Otomatis melempar ke halaman dokumentasi
+    return RedirectResponse(url="/docs")
 
 @app.get("/books", response_model=list[BookOut], summary="List all books")
 async def list_books() -> list[BookOut]:
@@ -161,16 +141,10 @@ async def list_books() -> list[BookOut]:
         books = result.scalars().all()
     return [BookOut.model_validate(b) for b in books]
 
-
-@app.get(
-    "/books/{slug}",
-    response_model=BookDetailOut,
-    summary="Get book detail with chapters",
-)
+@app.get("/books/{slug}", response_model=BookDetailOut, summary="Get book detail with chapters")
 async def get_book(slug: str) -> BookDetailOut:
     async with AsyncSession(engine) as session:
         book = await get_book_or_404(session, slug)
-
         chapters_result = await session.execute(
             select(Chapter)
             .where(Chapter.book_id == book.id)
@@ -182,12 +156,7 @@ async def get_book(slug: str) -> BookDetailOut:
     detail.chapters = [ChapterOut.model_validate(ch) for ch in chapters]
     return detail
 
-
-@app.get(
-    "/generate/{slug}",
-    response_model=GenerateOut,
-    summary="Generate AI summary and practice questions",
-)
+@app.get("/generate/{slug}", response_model=GenerateOut, summary="Generate AI summary and practice questions")
 async def generate(slug: str) -> GenerateOut:
     if not GEMINI_API_KEY:
         raise HTTPException(
@@ -197,7 +166,6 @@ async def generate(slug: str) -> GenerateOut:
 
     async with AsyncSession(engine) as session:
         book = await get_book_or_404(session, slug)
-
         chapters_result = await session.execute(
             select(Chapter)
             .where(Chapter.book_id == book.id)
@@ -211,7 +179,6 @@ async def generate(slug: str) -> GenerateOut:
             detail=f"No chapters found for book '{slug}'. Run the extractor first.",
         )
 
-    # Build a condensed text for the AI (limit to keep within token budget)
     combined_text = "\n\n".join(
         f"[{ch.title}]\n{(ch.content or '')[:3000]}" for ch in chapters
     )
@@ -220,25 +187,35 @@ async def generate(slug: str) -> GenerateOut:
     summary_prompt = (
         f"Buku berjudul \"{book_title}\".\n\n"
         f"Berikut adalah isi buku:\n{combined_text}\n\n"
-        "Buatkan ringkasan komprehensif dalam Bahasa Indonesia "
-        "(maksimal 500 kata)."
+        "Buatkan ringkasan komprehensif dalam Bahasa Indonesia (maksimal 500 kata)."
     )
 
     questions_prompt = (
         f"Buku berjudul \"{book_title}\".\n\n"
         f"Berikut adalah isi buku:\n{combined_text}\n\n"
-        "Buatkan 10 soal latihan pilihan ganda berbahasa Indonesia "
-        "beserta kunci jawabannya."
+        "Buatkan 10 soal latihan pilihan ganda berbahasa Indonesia beserta kunci jawabannya."
     )
 
-    model = genai.GenerativeModel(GEMINI_MODEL)
-    summary_response = await model.generate_content_async(summary_prompt)
-    questions_response = await model.generate_content_async(questions_prompt)
+    try:
+        # Inisialisasi client API terbaru
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        
+        # Menggunakan client asynchronous bawaan google-genai
+        summary_response = await client.aio.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=summary_prompt,
+        )
+        questions_response = await client.aio.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=questions_prompt,
+        )
+        
+        summary_text = summary_response.text.strip() if summary_response.text else ""
+        raw_questions = questions_response.text.strip() if questions_response.text else ""
 
-    summary_text: str = summary_response.text.strip()
-    raw_questions: str = questions_response.text.strip()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI Generation failed: {str(e)}")
 
-    # Split questions by numbered list items
     question_list = [
         q.strip()
         for q in re.split(r"\n(?=\d+[\.\)])", raw_questions)
