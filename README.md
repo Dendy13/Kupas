@@ -232,18 +232,31 @@ DATABASE_URL=postgresql+asyncpg://kupas_user:ganti_dengan_password_aman@postgres
 ADMIN_CORS_ORIGINS=https://admin.domain-kamu.com
 ```
 
-| Variabel | Keterangan |
-|---|---|
-| `POSTGRES_USER` | Username PostgreSQL (digunakan oleh service `postgres`) |
-| `POSTGRES_PASSWORD` | Password PostgreSQL |
-| `POSTGRES_DB` | Nama database PostgreSQL |
-| `DATABASE_URL` | Koneksi database — gunakan `postgres` (nama service) sebagai host |
-| `GEMINI_API_KEY` | API key Google Gemini (opsional) |
-| `ADMIN_USER` | Username login admin panel |
-| `ADMIN_PASSWORD` | Password login admin panel |
-| `ADMIN_CORS_ORIGINS` | Origin CORS yang diizinkan untuk JSON API admin (koma-separated) |
+| Variabel | Keterangan | Default |
+|---|---|---|
+| `POSTGRES_USER` | Username PostgreSQL (digunakan oleh service `postgres`) | `kupas_user` |
+| `POSTGRES_PASSWORD` | Password PostgreSQL | *(harus diisi)* |
+| `POSTGRES_DB` | Nama database PostgreSQL | `kupas` |
+| `DATABASE_URL` | Koneksi database — gunakan `postgres` (nama service) sebagai host | — |
+| `GEMINI_API_KEY` | API key Google Gemini (opsional) | *(kosong → `/generate` tidak aktif)* |
+| `GEMINI_MODEL` | Model Gemini yang digunakan | `gemini-1.5-flash` |
+| `CATALOG_API_URL` | Endpoint API katalog Kemdikdasmen | sudah diisi di `.env.example` |
+| `DETAIL_API_URL` | Endpoint API detail buku | sudah diisi di `.env.example` |
+| `PDF_STORAGE_DIR` | Folder penyimpanan PDF di dalam container | `kupas/storage/pdf` |
+| `ADMIN_USER` | Username login admin panel | `admin` |
+| `ADMIN_PASSWORD` | Password login admin panel | *(harus diisi)* |
+| `ADMIN_CORS_ORIGINS` | Origin CORS yang diizinkan untuk JSON API admin (koma-separated) | *(kosong = tidak ada CORS)* |
+| `ENV_FILE_PATH` | Path ke file `.env` yang dikelola admin panel | `.env` |
 
-#### 2. Build & jalankan
+#### 2. Deskripsi service
+
+| Service | Image / Build | Port | Keterangan |
+|---|---|---|---|
+| `postgres` | `postgres:16-alpine` | *(internal)* | Database PostgreSQL — data disimpan di volume `postgres_data` |
+| `kupas-api` | Build dari `Dockerfile` | `8000` | REST API publik (FastAPI) |
+| `kupas-admin` | Build dari `Dockerfile` | `8001` *(localhost only)* | Admin panel & JSON API (Basic Auth) |
+
+#### 3. Build & jalankan
 
 ```bash
 docker compose up -d --build
@@ -252,7 +265,7 @@ docker compose up -d --build
 - **API utama** → http://localhost:8000
 - **Admin panel** → http://127.0.0.1:8001 *(hanya localhost — akses via SSH tunnel dari server)*
 
-#### 3. Isi database (pertama kali)
+#### 4. Isi database (pertama kali)
 
 ```bash
 docker compose exec kupas-api python -m kupas.crawler.fetch_catalog
@@ -260,7 +273,7 @@ docker compose exec kupas-api python -m kupas.crawler.download_pdf
 docker compose exec kupas-api python -m kupas.processor.extract_text
 ```
 
-#### 4. Perintah berguna
+#### 5. Perintah berguna
 
 ```bash
 docker compose logs -f          # lihat log kedua service
