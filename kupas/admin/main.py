@@ -28,9 +28,11 @@ from urllib.parse import urlencode, urlparse
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from pydantic import BaseModel
 from sqlalchemy import Text, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -49,6 +51,8 @@ DATABASE_URL = os.getenv(
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme")
 PDF_STORAGE_DIR = Path(os.getenv("PDF_STORAGE_DIR", "kupas/storage/pdf"))
+_raw_cors = os.getenv("ADMIN_CORS_ORIGINS", "")
+ADMIN_CORS_ORIGINS: list[str] = [o.strip() for o in _raw_cors.split(",") if o.strip()]
 ENV_FILE_PATH = Path(os.path.abspath(os.getenv("ENV_FILE_PATH", ".env")))
 
 # Env vars exposed in the Settings UI — (key, label, is_sensitive)
@@ -144,6 +148,146 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ADMIN_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
+# ---------------------------------------------------------------------------
+# JSON API router — /api/v1/
+# ---------------------------------------------------------------------------
+
+api_router = APIRouter(prefix="/api/v1")
+
+
+# Pydantic schemas for JSON responses
+class BookSchema(BaseModel):
+    id: int
+    slug: str
+    title: str | None
+    author: str | None
+    subject: str | None
+    grade: str | None
+    cover_url: str | None
+    pdf_url: str | None
+    pdf_path: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class StatsSchema(BaseModel):
+    total_books: int
+    pdfs_downloaded: int
+    pdfs_missing: int
+    total_chapters: int
+    books_extracted: int
+
+
+@api_router.get("/stats", response_model=StatsSchema, summary="Admin stats (JSON)")
+async def api_stats(_: Auth) -> StatsSchema:
+    async with AsyncSession(engine) as session:
+        total = (
+            await session.execute(select(func.count()).select_from(Book))
+        ).scalar_one()
+        pdfs = (
+            await session.execute(
+                select(func.count()).select_from(Book).where(Book.pdf_path.isnot(None))
+            )
+        ).scalar_one()
+        chapters = (
+            await session.execute(select(func.count()).select_from(Chapter))
+        ).scalar_one()
+        extracted = (
+            await session.execute(
+                select(func.count(func.distinct(Chapter.book_id)))
+            )
+        ).scalar_one()
+    return StatsSchema(
+        total_books=total,
+        pdfs_downloaded=pdfs,
+        pdfs_missing=total - pdfs,
+        total_chapters=chapters,
+        books_extracted=extracted,
+    )
+
+
+@api_router.get("/books", response_model=list[BookSchema], summary="List books (JSON)")
+async def api_list_books(_: Auth) -> list[BookSchema]:
+    async with AsyncSession(engine) as session:
+        result = await session.execute(select(Book).order_by(Book.title))
+        books = result.scalars().all()
+    return [BookSchema.model_validate(b) for b in books]
+
+
+@api_router.post(
+    "/books/{slug}/download",
+    summary="Trigger PDF download (JSON)",
+)
+async def api_trigger_download(
+    slug: str, _: Auth, background_tasks: BackgroundTasks
+) -> JSONResponse:
+    async with AsyncSession(engine) as session:
+        book = (
+            await session.execute(select(Book).where(Book.slug == slug))
+        ).scalar_one_or_none()
+        if book is None:
+            raise HTTPException(status_code=404, detail=f"Book '{slug}' not found.")
+        if not book.pdf_url:
+            raise HTTPException(
+                status_code=422, detail=f"Book '{slug}' has no pdf_url set."
+            )
+    background_tasks.add_task(_bg_download, slug)
+    return JSONResponse({"status": "accepted", "slug": slug, "action": "download"})
+
+
+@api_router.post(
+    "/books/{slug}/extract",
+    summary="Trigger chapter extraction (JSON)",
+)
+async def api_trigger_extract(
+    slug: str, _: Auth, background_tasks: BackgroundTasks
+) -> JSONResponse:
+    async with AsyncSession(engine) as session:
+        book = (
+            await session.execute(select(Book).where(Book.slug == slug))
+        ).scalar_one_or_none()
+        if book is None:
+            raise HTTPException(status_code=404, detail=f"Book '{slug}' not found.")
+        if not book.pdf_path or not Path(book.pdf_path).exists():
+            raise HTTPException(
+                status_code=422,
+                detail=f"PDF for '{slug}' has not been downloaded yet.",
+            )
+    background_tasks.add_task(_bg_extract, slug)
+    return JSONResponse({"status": "accepted", "slug": slug, "action": "extract"})
+
+
+@api_router.delete("/books/{slug}", summary="Delete a book (JSON)")
+async def api_delete_book(slug: str, _: Auth) -> JSONResponse:
+    async with AsyncSession(engine) as session:
+        book = (
+            await session.execute(select(Book).where(Book.slug == slug))
+        ).scalar_one_or_none()
+        if book is None:
+            raise HTTPException(status_code=404, detail=f"Book '{slug}' not found.")
+
+        chapters = (
+            await session.execute(
+                select(Chapter).where(Chapter.book_id == book.id)
+            )
+        ).scalars().all()
+        for ch in chapters:
+            await session.delete(ch)
+        await session.delete(book)
+        await session.commit()
+    return JSONResponse({"status": "deleted", "slug": slug})
+
+
+app.include_router(api_router)
 
 # ---------------------------------------------------------------------------
 # .env file helpers
