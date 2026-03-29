@@ -1,0 +1,33 @@
+version: '3.9'
+
+networks:
+  kupas-net:
+    driver: bridge
+
+volumes:
+  pdf_storage:
+
+services:
+  kupas-api:
+    build: .
+    command: uvicorn kupas.api.main:app --host 0.0.0.0 --port 8000 --workers 2
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - pdf_storage:/app/kupas/storage/pdf
+    restart: unless-stopped
+    networks:
+      - kupas-net
+
+  kupas-admin:
+    build: .
+    command: uvicorn kupas.admin.main:app --host 0.0.0.0 --port 8001
+    ports:
+      - "127.0.0.1:8001:8001"
+    env_file: .env
+    volumes:
+      - pdf_storage:/app/kupas/storage/pdf
+    restart: unless-stopped
+    networks:
+      - kupas-net
