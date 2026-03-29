@@ -7,6 +7,8 @@ Fitur utama:
 - 🤖 **Ringkasan & soal latihan** — generate otomatis menggunakan Google Gemini AI
 - 🔌 **REST API** berbasis FastAPI dengan database PostgreSQL
 - 🕷️ **Pipeline crawler** — ambil katalog, unduh PDF, dan ekstrak teks per bab
+- 🔐 **Admin panel** — kelola buku, unduh PDF, dan ekstrak bab lewat UI web (port 8001) atau JSON API (`/api/v1/`)
+- 🐳 **Docker Compose** — deploy satu perintah dengan `docker compose up`
 
 ---
 
@@ -16,6 +18,7 @@ Pastikan kamu sudah menginstal:
 
 - **Python 3.11+**
 - **PostgreSQL 14+** (berjalan secara lokal atau di server)
+- **Docker & Docker Compose** *(opsional — untuk deployment satu perintah)*
 - *(Opsional)* **Google Gemini API Key** — untuk fitur ringkasan & soal latihan AI
 
 ---
@@ -29,7 +32,9 @@ Kupas/
 ├── kupas/
 │   ├── __init__.py             # Helper: download_ebook, generate_questions
 │   ├── api/
-│   │   └── main.py             # FastAPI REST API
+│   │   └── main.py             # FastAPI REST API (port 8000)
+│   ├── admin/
+│   │   └── main.py             # Admin panel & JSON API (port 8001)
 │   ├── crawler/
 │   │   ├── fetch_catalog.py    # Ambil katalog buku dari API Kemdikdasmen
 │   │   └── download_pdf.py     # Unduh PDF ke database & storage
@@ -37,6 +42,12 @@ Kupas/
 │   │   └── extract_text.py     # Ekstrak teks per bab dari PDF
 │   └── storage/
 │       └── pdf/                # Penyimpanan file PDF
+├── deploy/
+│   ├── DEPLOYMENT_NOTES.md     # Panduan deployment VPS
+│   └── nginx-example.conf      # Contoh konfigurasi Nginx
+├── Dockerfile                  # Docker image (python:3.11-slim)
+├── docker-compose.yml          # Orkestrasi container (API + Admin)
+├── run_dev.sh                  # Skrip dev lokal (kedua service + --reload)
 ├── requirements.txt
 └── .env.example
 ```
@@ -90,6 +101,14 @@ DETAIL_API_URL=https://api.buku.cloudapp.web.id/getDetails
 
 # Folder penyimpanan PDF
 PDF_STORAGE_DIR=kupas/storage/pdf
+
+# Admin panel
+ADMIN_USER=admin
+ADMIN_PASSWORD=ganti_password_ini
+# Daftar origin yang diizinkan mengakses Admin JSON API via CORS
+# Pisahkan dengan koma. Biarkan kosong untuk memblokir semua CORS request.
+ADMIN_CORS_ORIGINS=
+ENV_FILE_PATH=.env
 ```
 
 | Variabel | Keterangan | Default |
@@ -100,16 +119,37 @@ PDF_STORAGE_DIR=kupas/storage/pdf
 | `CATALOG_API_URL` | Endpoint API katalog Kemdikdasmen | sudah diisi |
 | `DETAIL_API_URL` | Endpoint API detail buku | sudah diisi |
 | `PDF_STORAGE_DIR` | Folder penyimpanan PDF | `kupas/storage/pdf` |
+| `ADMIN_USER` | Username login admin panel | `admin` |
+| `ADMIN_PASSWORD` | Password login admin panel | `changeme` |
+| `ADMIN_CORS_ORIGINS` | Origin CORS yang diizinkan untuk JSON API admin (koma-separated) | *(kosong = tidak ada CORS)* |
+| `ENV_FILE_PATH` | Path ke file `.env` yang dikelola admin panel | `.env` |
 
-### 4. Jalankan API
+### 4. Jalankan API & Admin Panel
+
+**Cara cepat — gunakan skrip dev:**
 
 ```bash
+chmod +x run_dev.sh
+./run_dev.sh
+```
+
+Skrip ini menjalankan kedua service sekaligus dengan `--reload`:
+- **API utama** → http://localhost:8000 (docs: http://localhost:8000/docs)
+- **Admin panel** → http://localhost:8001 (login dengan `ADMIN_USER`/`ADMIN_PASSWORD`)
+
+**Atau jalankan terpisah:**
+
+```bash
+# API utama
 uvicorn kupas.api.main:app --reload --port 8000
+
+# Admin panel (terminal terpisah)
+uvicorn kupas.admin.main:app --reload --port 8001
 ```
 
 API akan otomatis membuat tabel database saat pertama kali dijalankan.
 
-Dokumentasi interaktif tersedia di **http://localhost:8000/docs**.
+Dokumentasi interaktif API utama tersedia di **http://localhost:8000/docs**.
 
 ### 5. Jalankan pipeline data (isi database)
 
@@ -144,17 +184,72 @@ Lalu buka **http://localhost:3000**.
 
 ## Endpoint API
 
+### API Utama (port 8000) — publik
+
 | Method | Path | Deskripsi |
 |---|---|---|
 | `GET` | `/books` | Daftar semua buku |
 | `GET` | `/books/{slug}` | Detail buku beserta bab |
 | `GET` | `/generate/{slug}` | Ringkasan & soal dari Gemini AI |
 
+### Admin JSON API (port 8001 — `localhost` only) — butuh HTTP Basic Auth
+
+| Method | Path | Deskripsi |
+|---|---|---|
+| `GET` | `/api/v1/stats` | Statistik agregat (buku, PDF, chapter) |
+| `GET` | `/api/v1/books` | Daftar buku lengkap |
+| `POST` | `/api/v1/books/{slug}/download` | Mulai unduh PDF (background task) |
+| `POST` | `/api/v1/books/{slug}/extract` | Mulai ekstrak chapter (background task) |
+| `DELETE` | `/api/v1/books/{slug}` | Hapus buku beserta seluruh chapter |
+
 ---
 
 ## Deployment
 
-### 🖥️ VPS (Direkomendasikan)
+### 🐳 Docker Compose (Direkomendasikan untuk deploy cepat)
+
+Cara paling mudah untuk menjalankan Kupas di server atau lokal tanpa perlu setup Python & PostgreSQL manual.
+
+#### 1. Siapkan `.env`
+
+```bash
+cp .env.example .env
+nano .env  # sesuaikan DATABASE_URL, GEMINI_API_KEY, ADMIN_PASSWORD, dsb.
+```
+
+> **Penting:** `DATABASE_URL` harus mengarah ke PostgreSQL yang bisa diakses container (bukan `localhost`).  
+> Jika menggunakan PostgreSQL di host: gunakan `host.docker.internal` (Mac/Windows) atau IP lokal (Linux).  
+> Contoh: `postgresql+asyncpg://kupas_user:password@host.docker.internal:5432/kupas`
+
+#### 2. Build & jalankan
+
+```bash
+docker compose up -d --build
+```
+
+- **API utama** → http://localhost:8000
+- **Admin panel** → http://127.0.0.1:8001 *(hanya localhost — akses via SSH tunnel dari server)*
+
+#### 3. Isi database (pertama kali)
+
+```bash
+docker compose exec kupas-api python -m kupas.crawler.fetch_catalog
+docker compose exec kupas-api python -m kupas.crawler.download_pdf
+docker compose exec kupas-api python -m kupas.processor.extract_text
+```
+
+#### 4. Perintah berguna
+
+```bash
+docker compose logs -f          # lihat log kedua service
+docker compose restart          # restart semua service
+docker compose down             # stop & hapus container (volume tetap ada)
+docker compose down -v          # stop & hapus container + volume PDF
+```
+
+---
+
+### 🖥️ VPS (Tanpa Docker)
 
 Deployment di VPS (misalnya DigitalOcean, Linode, AWS EC2) memberikan kontrol penuh dan cocok untuk aplikasi ini karena membutuhkan penyimpanan PDF dan proses crawler yang berjalan lama.
 
@@ -198,20 +293,38 @@ python -m kupas.crawler.download_pdf
 python -m kupas.processor.extract_text
 ```
 
-#### 5. Jalankan API sebagai service (systemd)
+#### 5. Jalankan sebagai service (systemd)
 
-Buat file `/etc/systemd/system/kupas.service`:
+Buat file `/etc/systemd/system/kupas-api.service`:
 
 ```ini
 [Unit]
-Description=Kupas FastAPI
+Description=Kupas API
 After=network.target postgresql.service
 
 [Service]
 User=www-data
 WorkingDirectory=/opt/kupas
 EnvironmentFile=/opt/kupas/.env
-ExecStart=/opt/kupas/.venv/bin/uvicorn kupas.api.main:app --host 127.0.0.1 --port 8000
+ExecStart=/opt/kupas/.venv/bin/uvicorn kupas.api.main:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Buat file `/etc/systemd/system/kupas-admin.service`:
+
+```ini
+[Unit]
+Description=Kupas Admin Panel
+After=network.target postgresql.service
+
+[Service]
+User=www-data
+WorkingDirectory=/opt/kupas
+EnvironmentFile=/opt/kupas/.env
+ExecStart=/opt/kupas/.venv/bin/uvicorn kupas.admin.main:app --host 127.0.0.1 --port 8001
 Restart=on-failure
 
 [Install]
@@ -220,7 +333,7 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now kupas
+sudo systemctl enable --now kupas-api kupas-admin
 ```
 
 #### 6. Konfigurasi Nginx
