@@ -208,18 +208,40 @@ Lalu buka **http://localhost:3000**.
 
 ### 🐳 Docker Compose (Direkomendasikan untuk deploy cepat)
 
-Cara paling mudah untuk menjalankan Kupas di server atau lokal tanpa perlu setup Python & PostgreSQL manual.
+Cara paling mudah untuk menjalankan Kupas di server atau lokal tanpa perlu setup Python & PostgreSQL manual. Docker Compose sudah menyertakan service PostgreSQL — **tidak perlu instalasi database terpisah**.
 
 #### 1. Siapkan `.env`
 
 ```bash
 cp .env.example .env
-nano .env  # sesuaikan DATABASE_URL, GEMINI_API_KEY, ADMIN_PASSWORD, dsb.
+nano .env  # sesuaikan GEMINI_API_KEY, ADMIN_PASSWORD, dan kredensial database
 ```
 
-> **Penting:** `DATABASE_URL` harus mengarah ke PostgreSQL yang bisa diakses container (bukan `localhost`).  
-> Jika menggunakan PostgreSQL di host: gunakan `host.docker.internal` (Mac/Windows) atau IP lokal (Linux).  
-> Contoh: `postgresql+asyncpg://kupas_user:password@host.docker.internal:5432/kupas`
+Pastikan variabel berikut sesuai di `.env`:
+
+```env
+# Kredensial PostgreSQL (harus sama di DATABASE_URL dan POSTGRES_* vars)
+POSTGRES_USER=kupas_user
+POSTGRES_PASSWORD=ganti_dengan_password_aman
+POSTGRES_DB=kupas
+
+# Gunakan nama service 'postgres' sebagai host (bukan localhost)
+DATABASE_URL=postgresql+asyncpg://kupas_user:ganti_dengan_password_aman@postgres:5432/kupas
+
+# (Opsional) CORS origins untuk Admin JSON API
+ADMIN_CORS_ORIGINS=https://admin.domain-kamu.com
+```
+
+| Variabel | Keterangan |
+|---|---|
+| `POSTGRES_USER` | Username PostgreSQL (digunakan oleh service `postgres`) |
+| `POSTGRES_PASSWORD` | Password PostgreSQL |
+| `POSTGRES_DB` | Nama database PostgreSQL |
+| `DATABASE_URL` | Koneksi database — gunakan `postgres` (nama service) sebagai host |
+| `GEMINI_API_KEY` | API key Google Gemini (opsional) |
+| `ADMIN_USER` | Username login admin panel |
+| `ADMIN_PASSWORD` | Password login admin panel |
+| `ADMIN_CORS_ORIGINS` | Origin CORS yang diizinkan untuk JSON API admin (koma-separated) |
 
 #### 2. Build & jalankan
 

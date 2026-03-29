@@ -6,8 +6,26 @@ networks:
 
 volumes:
   pdf_storage:
+  postgres_data:
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - kupas-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   kupas-api:
     build: .
     command: uvicorn kupas.api.main:app --host 0.0.0.0 --port 8000 --workers 2
@@ -17,6 +35,9 @@ services:
     volumes:
       - pdf_storage:/app/kupas/storage/pdf
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - kupas-net
 
@@ -29,5 +50,8 @@ services:
     volumes:
       - pdf_storage:/app/kupas/storage/pdf
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - kupas-net
