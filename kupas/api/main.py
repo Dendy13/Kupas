@@ -156,7 +156,7 @@ async def get_book(slug: str) -> BookDetailOut:
     detail.chapters = [ChapterOut.model_validate(ch) for ch in chapters]
     return detail
 
-@app.get("/generate/{slug}", response_model=GenerateOut, summary="Generate AI summary and practice questions")
+@app.post("/books/{slug}/generate", response_model=GenerateOut, summary="Generate AI summary and practice questions")
 async def generate(slug: str) -> GenerateOut:
     if not GEMINI_API_KEY:
         raise HTTPException(
