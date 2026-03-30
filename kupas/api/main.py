@@ -5,6 +5,7 @@ FastAPI application for the Kupas platform.
 
 import os
 import re
+import secrets
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -12,7 +13,8 @@ from typing import AsyncGenerator
 from google import genai
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import Text, select
@@ -28,6 +30,11 @@ DETAIL_API_URL = os.getenv(
     "DETAIL_API_URL",
     "https://api.buku.cloudapp.web.id/getDetails",
 )
+
+_raw_api_keys = os.getenv("API_KEYS", "")
+VALID_API_KEYS: set[str] = {k.strip() for k in _raw_api_keys.split(",") if k.strip()}
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "https://kupas.dendyfajark.page")
+ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 
@@ -107,6 +114,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key"],
+)
+
+# ---------------------------------------------------------------------------
+# Auth dependency
+# ---------------------------------------------------------------------------
+
+async def require_api_key(request: Request) -> None:
+    if not VALID_API_KEYS:
+        return
+    api_key = request.headers.get("X-API-Key", "")
+    if not any(secrets.compare_digest(api_key, valid) for valid in VALID_API_KEYS):
+        raise HTTPException(status_code=401, detail="API key tidak valid.")
+
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
@@ -135,14 +161,14 @@ async def root():
     return RedirectResponse(url="/docs")
 
 @app.get("/books", response_model=list[BookOut], summary="List all books")
-async def list_books() -> list[BookOut]:
+async def list_books(deps: None = Depends(require_api_key)) -> list[BookOut]:
     async with AsyncSession(engine) as session:
         result = await session.execute(select(Book).order_by(Book.title))
         books = result.scalars().all()
     return [BookOut.model_validate(b) for b in books]
 
 @app.get("/books/{slug}", response_model=BookDetailOut, summary="Get book detail with chapters")
-async def get_book(slug: str) -> BookDetailOut:
+async def get_book(slug: str, deps: None = Depends(require_api_key)) -> BookDetailOut:
     async with AsyncSession(engine) as session:
         book = await get_book_or_404(session, slug)
         chapters_result = await session.execute(
@@ -157,7 +183,7 @@ async def get_book(slug: str) -> BookDetailOut:
     return detail
 
 @app.post("/books/{slug}/generate", response_model=GenerateOut, summary="Generate AI summary and practice questions")
-async def generate(slug: str) -> GenerateOut:
+async def generate(slug: str, deps: None = Depends(require_api_key)) -> GenerateOut:
     if not GEMINI_API_KEY:
         raise HTTPException(
             status_code=503,
