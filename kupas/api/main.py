@@ -15,7 +15,6 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import Text, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -35,6 +34,11 @@ _raw_api_keys = os.getenv("API_KEYS", "")
 VALID_API_KEYS: set[str] = {k.strip() for k in _raw_api_keys.split(",") if k.strip()}
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "https://kupas.dendyfajark.page")
 ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
+# Sembunyikan docs di production jika API_KEYS sudah diset
+_docs_url = None if VALID_API_KEYS else "/docs"
+_redoc_url = None if VALID_API_KEYS else "/redoc"
+_openapi_url = None if VALID_API_KEYS else "/openapi.json"
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 
@@ -112,6 +116,9 @@ app = FastAPI(
     description="Platform edukasi — ringkasan & soal latihan dari buku Kemdikdasmen",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url=_docs_url,
+    redoc_url=_redoc_url,
+    openapi_url=_openapi_url,
 )
 
 app.add_middleware(
@@ -157,8 +164,7 @@ async def fetch_remote_detail(slug: str) -> dict:
 # Tambahan Rute Root untuk mencegah 404 Not Found
 @app.get("/", include_in_schema=False)
 async def root():
-    # Otomatis melempar ke halaman dokumentasi
-    return RedirectResponse(url="/docs")
+    raise HTTPException(status_code=404, detail="Not found.")
 
 @app.get("/books", response_model=list[BookOut], summary="List all books")
 async def list_books(deps: None = Depends(require_api_key)) -> list[BookOut]:
