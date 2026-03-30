@@ -17,7 +17,6 @@ import asyncio
 import logging
 import os
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pdfplumber
@@ -67,7 +66,6 @@ class Chapter(Base):
     chapter_number: Mapped[int]
     title: Mapped[str | None]
     content: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
     book: Mapped["Book"] = relationship("Book", back_populates="chapters")
 
