@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.kupas.dendyfajark.page'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api-kupas.dendyfajark.page'
 
 export async function getBooks() {
   const res = await fetch(`${API_URL}/books`, { next: { revalidate: 60 } })
