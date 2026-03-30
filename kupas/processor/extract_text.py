@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import asyncio
+import gc
 import logging
 import os
 import re
@@ -33,6 +34,8 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/kupas")
 
 engine = create_async_engine(DATABASE_URL, echo=False)
+
+PAGE_BATCH_SIZE = int(os.getenv("PDF_PAGE_BATCH_SIZE", "20"))
 
 # Regex that matches common chapter headings such as:
 #   "BAB 1", "BAB I", "BAB 1 PENDAHULUAN", "CHAPTER 1 …"
@@ -103,37 +106,41 @@ def extract_chapters_from_pdf(pdf_path: Path) -> list[dict]:
     current_lines: list[str] = []
     chapter_index: int = 0
 
-    def _flush(title: str, lines: list[str], index: int) -> dict:
-        return {
-            "chapter_number": index,
-            "title": title or f"Chapter {index}",
-            "content": "\n".join(lines).strip(),
-        }
+    def _flush(title, lines, index):
+        return {"chapter_number": index, "title": title or f"Chapter {index}", "content": "\n".join(lines).strip()}
 
     with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text() or ""
-            for line in text.splitlines():
-                if _is_chapter_heading(line):
-                    if current_lines or current_title:
-                        chapters.append(_flush(current_title, current_lines, chapter_index))
-                    chapter_index += 1
-                    current_title = line.strip()
-                    current_lines = []
-                else:
-                    current_lines.append(line)
+        total_pages = len(pdf.pages)
+        logger.info("Total halaman: %d, batch: %d", total_pages, PAGE_BATCH_SIZE)
+        for batch_start in range(0, total_pages, PAGE_BATCH_SIZE):
+            batch_end = min(batch_start + PAGE_BATCH_SIZE, total_pages)
+            logger.info("Proses halaman %d-%d...", batch_start + 1, batch_end)
+            for page_num in range(batch_start, batch_end):
+                page = pdf.pages[page_num]
+                text = page.extract_text() or ""
+                page.flush_cache()
+                for line in text.splitlines():
+                    if _is_chapter_heading(line):
+                        if current_lines or current_title:
+                            chapters.append(_flush(current_title, current_lines, chapter_index))
+                        chapter_index += 1
+                        current_title = line.strip()
+                        current_lines = []
+                    else:
+                        current_lines.append(line)
+            gc.collect()
 
-    # Flush the last chapter
     if current_lines or current_title:
         chapters.append(_flush(current_title, current_lines, chapter_index or 1))
 
     if not chapters:
-        # Fallback: return entire content as a single chapter
+        full_lines = []
         with pdfplumber.open(pdf_path) as pdf:
-            full_text = "\n".join(
-                page.extract_text() or "" for page in pdf.pages
-            )
-        chapters = [{"chapter_number": 1, "title": "Full Text", "content": full_text.strip()}]
+            for page in pdf.pages:
+                full_lines.append(page.extract_text() or "")
+                page.flush_cache()
+                gc.collect()
+        chapters = [{"chapter_number": 1, "title": "Full Text", "content": "\n".join(full_lines).strip()}]
 
     return chapters
 
@@ -163,16 +170,10 @@ async def process_book(slug: str) -> None:
         chapters_data = extract_chapters_from_pdf(Path(book.pdf_path))
 
         for ch_data in chapters_data:
-            session.add(
-                Chapter(
-                    book_id=book.id,
-                    chapter_number=ch_data["chapter_number"],
-                    title=ch_data["title"],
-                    content=ch_data["content"],
-                )
-            )
-
-        await session.commit()
+            async with AsyncSession(engine) as s:
+                s.add(Chapter(book_id=book.id, **ch_data))
+                await s.commit()
+        gc.collect()
         logger.info(
             "Stored %d chapters for book '%s'.", len(chapters_data), slug
         )
