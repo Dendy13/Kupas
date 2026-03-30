@@ -13,8 +13,10 @@ from typing import AsyncGenerator
 from google import genai
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import APIKeyHeader
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import Text, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -34,11 +36,6 @@ _raw_api_keys = os.getenv("API_KEYS", "")
 VALID_API_KEYS: set[str] = {k.strip() for k in _raw_api_keys.split(",") if k.strip()}
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "https://kupas.dendyfajark.page")
 ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
-
-# Sembunyikan docs di production jika API_KEYS sudah diset
-_docs_url = None if VALID_API_KEYS else "/docs"
-_redoc_url = None if VALID_API_KEYS else "/redoc"
-_openapi_url = None if VALID_API_KEYS else "/openapi.json"
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 
@@ -116,9 +113,6 @@ app = FastAPI(
     description="Platform edukasi — ringkasan & soal latihan dari buku Kemdikdasmen",
     version="0.1.0",
     lifespan=lifespan,
-    docs_url=_docs_url,
-    redoc_url=_redoc_url,
-    openapi_url=_openapi_url,
 )
 
 app.add_middleware(
@@ -133,11 +127,12 @@ app.add_middleware(
 # Auth dependency
 # ---------------------------------------------------------------------------
 
-async def require_api_key(request: Request) -> None:
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def require_api_key(api_key: str = Depends(api_key_header)) -> None:
     if not VALID_API_KEYS:
-        return
-    api_key = request.headers.get("X-API-Key", "")
-    if not any(secrets.compare_digest(api_key, valid) for valid in VALID_API_KEYS):
+        return  # development mode
+    if not api_key or not any(secrets.compare_digest(api_key, valid) for valid in VALID_API_KEYS):
         raise HTTPException(status_code=401, detail="API key tidak valid.")
 
 # ---------------------------------------------------------------------------
@@ -164,17 +159,17 @@ async def fetch_remote_detail(slug: str) -> dict:
 # Tambahan Rute Root untuk mencegah 404 Not Found
 @app.get("/", include_in_schema=False)
 async def root():
-    raise HTTPException(status_code=404, detail="Not found.")
+    return RedirectResponse(url="/docs")
 
-@app.get("/books", response_model=list[BookOut], summary="List all books")
-async def list_books(deps: None = Depends(require_api_key)) -> list[BookOut]:
+@app.get("/books", response_model=list[BookOut], summary="List all books", dependencies=[Depends(require_api_key)])
+async def list_books() -> list[BookOut]:
     async with AsyncSession(engine) as session:
         result = await session.execute(select(Book).order_by(Book.title))
         books = result.scalars().all()
     return [BookOut.model_validate(b) for b in books]
 
-@app.get("/books/{slug}", response_model=BookDetailOut, summary="Get book detail with chapters")
-async def get_book(slug: str, deps: None = Depends(require_api_key)) -> BookDetailOut:
+@app.get("/books/{slug}", response_model=BookDetailOut, summary="Get book detail with chapters", dependencies=[Depends(require_api_key)])
+async def get_book(slug: str) -> BookDetailOut:
     async with AsyncSession(engine) as session:
         book = await get_book_or_404(session, slug)
         chapters_result = await session.execute(
@@ -188,8 +183,8 @@ async def get_book(slug: str, deps: None = Depends(require_api_key)) -> BookDeta
     detail.chapters = [ChapterOut.model_validate(ch) for ch in chapters]
     return detail
 
-@app.post("/books/{slug}/generate", response_model=GenerateOut, summary="Generate AI summary and practice questions")
-async def generate(slug: str, deps: None = Depends(require_api_key)) -> GenerateOut:
+@app.post("/books/{slug}/generate", response_model=GenerateOut, summary="Generate AI summary and practice questions", dependencies=[Depends(require_api_key)])
+async def generate(slug: str) -> GenerateOut:
     if not GEMINI_API_KEY:
         raise HTTPException(
             status_code=503,
