@@ -29,8 +29,8 @@ services:
   kupas-api:
     build: .
     command: uvicorn kupas.api.main:app --host 0.0.0.0 --port 8000 --workers 2
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     env_file: .env
     volumes:
       - pdf_storage:/app/kupas/storage/pdf
@@ -44,8 +44,8 @@ services:
   kupas-admin:
     build: .
     command: uvicorn kupas.admin.main:app --host 0.0.0.0 --port 8001
-    ports:
-      - "127.0.0.1:8001:8001"
+    expose:
+      - "8001"
     env_file: .env
     volumes:
       - pdf_storage:/app/kupas/storage/pdf
@@ -53,5 +53,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - kupas-net
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - kupas-api
+      - kupas-admin
+    restart: unless-stopped
     networks:
       - kupas-net
