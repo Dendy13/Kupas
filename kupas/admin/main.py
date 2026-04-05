@@ -40,8 +40,18 @@ from kupas.config import (
     ADMIN_CORS_ORIGINS,
     ENV_FILE_PATH,
 )
-from kupas.models import Book, Chapter
+from kupas.models import Book, Chapter, GeneratedContent, JobLog
 from kupas.database import engine, create_tables, get_session
+from kupas.services.jobs import (
+    log_job,
+    run_fetch_catalog,
+    run_download_all_pdfs,
+    run_extract_all,
+    run_generate_all,
+    run_generate_for_book,
+    run_download_pdf,
+    run_extract_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +249,90 @@ async def api_delete_book(slug: str, _: Auth) -> JSONResponse:
         await session.delete(book)
         await session.commit()
     return JSONResponse({"status": "deleted", "slug": slug})
+
+
+# ---------------------------------------------------------------------------
+# Pipeline API endpoints
+# ---------------------------------------------------------------------------
+
+
+class JobLogSchema(BaseModel):
+    id: int
+    job_type: str
+    slug: str | None
+    status: str
+    message: str | None
+    created_at: str
+    updated_at: str
+
+    model_config = {"from_attributes": True}
+
+
+@api_router.post("/pipeline/fetch-catalog", summary="Trigger catalog fetch (JSON)")
+async def api_fetch_catalog(_: Auth, background_tasks: BackgroundTasks) -> JSONResponse:
+    job_id = await log_job("fetch_catalog")
+    background_tasks.add_task(run_fetch_catalog, job_id)
+    return JSONResponse({"job_id": job_id, "status": "accepted"})
+
+
+@api_router.post("/pipeline/download-all", summary="Trigger bulk PDF download (JSON)")
+async def api_download_all(_: Auth, background_tasks: BackgroundTasks) -> JSONResponse:
+    job_id = await log_job("download_pdf")
+    background_tasks.add_task(run_download_all_pdfs, job_id)
+    return JSONResponse({"job_id": job_id, "status": "accepted"})
+
+
+@api_router.post("/pipeline/extract-all", summary="Trigger bulk chapter extraction (JSON)")
+async def api_extract_all(_: Auth, background_tasks: BackgroundTasks) -> JSONResponse:
+    job_id = await log_job("extract_text")
+    background_tasks.add_task(run_extract_all, job_id)
+    return JSONResponse({"job_id": job_id, "status": "accepted"})
+
+
+@api_router.post("/pipeline/generate-all", summary="Trigger bulk AI generation (JSON)")
+async def api_generate_all(_: Auth, background_tasks: BackgroundTasks) -> JSONResponse:
+    job_id = await log_job("generate_ai")
+    background_tasks.add_task(run_generate_all, job_id)
+    return JSONResponse({"job_id": job_id, "status": "accepted"})
+
+
+@api_router.get("/jobs", summary="List last 50 job logs (JSON)")
+async def api_list_jobs(_: Auth) -> JSONResponse:
+    async with get_session() as session:
+        result = await session.execute(
+            select(JobLog).order_by(JobLog.created_at.desc()).limit(50)
+        )
+        jobs = result.scalars().all()
+    return JSONResponse([
+        {
+            "id": j.id,
+            "job_type": j.job_type,
+            "slug": j.slug,
+            "status": j.status,
+            "message": j.message,
+            "created_at": j.created_at.isoformat(),
+            "updated_at": j.updated_at.isoformat(),
+        }
+        for j in jobs
+    ])
+
+
+@api_router.get("/jobs/{job_id}", summary="Get a single job log (JSON)")
+async def api_get_job(job_id: int, _: Auth) -> JSONResponse:
+    async with get_session() as session:
+        result = await session.execute(select(JobLog).where(JobLog.id == job_id))
+        job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found.")
+    return JSONResponse({
+        "id": job.id,
+        "job_type": job.job_type,
+        "slug": job.slug,
+        "status": job.status,
+        "message": job.message,
+        "created_at": job.created_at.isoformat(),
+        "updated_at": job.updated_at.isoformat(),
+    })
 
 
 app.include_router(api_router)
@@ -547,6 +641,7 @@ def _page(
         ("📊 Dashboard", "/", "dash"),
         ("📚 Daftar Buku", "/books", "books"),
         ("➕ Tambah Buku", "/books/add", "add"),
+        ("🚀 Pipeline", "/pipeline", "pipeline"),
         ("⚙️ Pengaturan", "/settings", "settings"),
     ]
     nav_html = "".join(
@@ -586,6 +681,185 @@ def _redirect(url: str, msg: str = "", msg_type: str = "success") -> RedirectRes
 
 
 # ---------------------------------------------------------------------------
+# Pipeline page
+# ---------------------------------------------------------------------------
+
+
+@app.get("/pipeline", response_class=HTMLResponse)
+async def pipeline_page(_: Auth) -> HTMLResponse:
+    body = """
+    <!-- Section 1: Pipeline Otomatis -->
+    <div class="card">
+      <div class="card-title">🔧 Pipeline Otomatis</div>
+      <div style="display:flex;gap:.75rem;flex-wrap:wrap">
+        <button id="btn-fetch" class="btn btn-primary" onclick="triggerPipeline('fetch-catalog', this)">
+          🔄 Fetch Katalog
+        </button>
+        <button id="btn-download" class="btn btn-warning" onclick="triggerPipeline('download-all', this)">
+          ⬇ Download Semua PDF
+        </button>
+        <button id="btn-extract" class="btn btn-success" onclick="triggerPipeline('extract-all', this)">
+          🔍 Ekstrak Semua
+        </button>
+        <button id="btn-generate" class="btn btn-secondary" onclick="triggerPipeline('generate-all', this)">
+          ✨ Generate Semua AI
+        </button>
+      </div>
+      <div id="pipeline-msg" style="margin-top:.75rem;font-size:.875rem;color:#2563eb"></div>
+    </div>
+
+    <!-- Section 2: Status Job -->
+    <div class="card">
+      <div class="card-title">📋 Status Job
+        <button class="btn btn-secondary" style="float:right;font-size:.75rem" onclick="loadJobs()">🔄 Refresh</button>
+      </div>
+      <div class="tbl-wrap">
+        <table id="jobs-table">
+          <thead>
+            <tr><th>ID</th><th>Tipe</th><th>Slug</th><th>Status</th><th>Pesan</th><th>Waktu</th></tr>
+          </thead>
+          <tbody id="jobs-body">
+            <tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:1.5rem">Memuat…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Section 3: Full Pipeline -->
+    <div class="card">
+      <div class="card-title">🚀 Full Pipeline</div>
+      <p style="font-size:.875rem;color:#64748b;margin-bottom:.75rem">
+        Menjalankan seluruh pipeline secara berurutan: Fetch → Download → Ekstrak → Generate AI.
+      </p>
+      <button id="btn-full" class="btn btn-primary" style="font-size:.95rem;padding:.55rem 1.2rem"
+              onclick="runFullPipeline(this)">
+        🚀 Jalankan Full Pipeline
+      </button>
+      <div id="full-pipeline-progress" style="margin-top:.75rem;font-size:.875rem"></div>
+    </div>
+
+    <script>
+    // --- Pipeline single step ---
+    async function triggerPipeline(step, btn) {
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '⏳ ' + orig.trim();
+      const msgEl = document.getElementById('pipeline-msg');
+      try {
+        const resp = await fetch('/api/v1/pipeline/' + step, {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          msgEl.style.color = '#16a34a';
+          msgEl.textContent = 'Job dimulai! ID: ' + data.job_id;
+          setTimeout(() => loadJobs(), 800);
+        } else {
+          msgEl.style.color = '#dc2626';
+          msgEl.textContent = 'Error: ' + (data.detail || JSON.stringify(data));
+        }
+      } catch(e) {
+        msgEl.style.color = '#dc2626';
+        msgEl.textContent = 'Request gagal: ' + e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    }
+
+    // --- Load job list ---
+    function statusBadge(s) {
+      const map = {
+        pending: 'background:#fef9c3;color:#854d0e',
+        running: 'background:#dbeafe;color:#1e40af',
+        done:    'background:#dcfce7;color:#166534',
+        error:   'background:#fee2e2;color:#991b1b'
+      };
+      const style = map[s] || '';
+      const pulse = s === 'running' ? 'animation:pulse 1.5s infinite;' : '';
+      return '<span class="badge" style="' + style + ';' + pulse + '">' + s + '</span>';
+    }
+
+    async function loadJobs() {
+      try {
+        const resp = await fetch('/api/v1/jobs');
+        if (!resp.ok) return;
+        const jobs = await resp.json();
+        const tbody = document.getElementById('jobs-body');
+        if (!jobs.length) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:1.5rem">Belum ada job.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = jobs.slice(0, 20).map(j => {
+          const dt = new Date(j.created_at).toLocaleString('id-ID');
+          return '<tr>' +
+            '<td>' + j.id + '</td>' +
+            '<td><code>' + j.job_type + '</code></td>' +
+            '<td>' + (j.slug || '<span style="color:#94a3b8">—</span>') + '</td>' +
+            '<td>' + statusBadge(j.status) + '</td>' +
+            '<td style="max-width:280px;white-space:normal">' + (j.message || '—') + '</td>' +
+            '<td style="white-space:nowrap">' + dt + '</td>' +
+            '</tr>';
+        }).join('');
+      } catch(e) {
+        console.error('loadJobs error', e);
+      }
+    }
+
+    // Auto-refresh every 5 seconds
+    loadJobs();
+    setInterval(loadJobs, 5000);
+
+    // --- Full pipeline ---
+    async function runFullPipeline(btn) {
+      const progressEl = document.getElementById('full-pipeline-progress');
+      btn.disabled = true;
+      btn.textContent = '⏳ Sedang berjalan…';
+
+      const steps = [
+        { label: '1/4 🔄 Fetch Katalog…',    endpoint: 'fetch-catalog' },
+        { label: '2/4 ⬇ Download Semua PDF…', endpoint: 'download-all' },
+        { label: '3/4 🔍 Ekstrak Semua…',     endpoint: 'extract-all'  },
+        { label: '4/4 ✨ Generate AI…',       endpoint: 'generate-all' },
+      ];
+
+      for (const step of steps) {
+        progressEl.style.color = '#2563eb';
+        progressEl.textContent = step.label;
+        try {
+          const resp = await fetch('/api/v1/pipeline/' + step.endpoint, { method: 'POST' });
+          const data = await resp.json();
+          if (!resp.ok) {
+            progressEl.style.color = '#dc2626';
+            progressEl.textContent = 'Error pada ' + step.label + ': ' + (data.detail || JSON.stringify(data));
+            break;
+          }
+        } catch(e) {
+          progressEl.style.color = '#dc2626';
+          progressEl.textContent = 'Request gagal: ' + e.message;
+          break;
+        }
+        if (step !== steps[steps.length - 1]) {
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+
+      progressEl.style.color = '#16a34a';
+      progressEl.textContent = '✅ Semua pipeline telah dimulai! Pantau status di tabel di atas.';
+      btn.disabled = false;
+      btn.textContent = '🚀 Jalankan Full Pipeline';
+      loadJobs();
+    }
+    </script>
+    <style>
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+    </style>
+    """
+    return _page("Pipeline", body, "pipeline")
+
+
+# ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
 
@@ -613,14 +887,55 @@ async def dashboard(
                 select(func.count(func.distinct(Chapter.book_id)))
             )
         ).scalar_one()
+        ai_generated = (
+            await session.execute(select(func.count()).select_from(GeneratedContent))
+        ).scalar_one()
+        pending_extract = (
+            await session.execute(
+                select(func.count()).select_from(Book).where(
+                    Book.pdf_path.isnot(None),
+                    ~Book.id.in_(select(func.distinct(Chapter.book_id)))
+                )
+            )
+        ).scalar_one()
+        recent_jobs_result = await session.execute(
+            select(JobLog).order_by(JobLog.created_at.desc()).limit(5)
+        )
+        recent_jobs = recent_jobs_result.scalars().all()
+
+    def _job_badge(s: str) -> str:
+        colors = {
+            "pending": "background:#fef9c3;color:#854d0e",
+            "running": "background:#dbeafe;color:#1e40af",
+            "done":    "background:#dcfce7;color:#166534",
+            "error":   "background:#fee2e2;color:#991b1b",
+        }
+        style = colors.get(s, "")
+        return f'<span class="badge" style="{style}">{_esc(s)}</span>'
+
+    job_rows = "".join(
+        f"<tr><td>{j.id}</td><td><code>{_esc(j.job_type)}</code></td>"
+        f"<td>{_esc(j.slug or '—')}</td><td>{_job_badge(j.status)}</td>"
+        f"<td>{_esc(j.message or '—')}</td></tr>"
+        for j in recent_jobs
+    )
+    jobs_section = (
+        '<div style="color:#94a3b8;text-align:center;padding:1rem">Belum ada job.</div>'
+        if not recent_jobs
+        else f'<div class="tbl-wrap"><table>'
+             f'<thead><tr><th>ID</th><th>Tipe</th><th>Slug</th><th>Status</th><th>Pesan</th></tr></thead>'
+             f'<tbody>{job_rows}</tbody></table></div>'
+    )
 
     body = f"""
     <div class="stats">
       <div class="stat"><div class="val">{total}</div><div class="lbl">Total Buku</div></div>
       <div class="stat"><div class="val">{pdfs}</div><div class="lbl">PDF Tersimpan</div></div>
-      <div class="stat"><div class="val">{total - pdfs}</div><div class="lbl">PDF Belum Ada</div></div>
+      <div class="stat"><div class="val">{total - pdfs}</div><div class="lbl">Pending Download</div></div>
       <div class="stat"><div class="val">{chapters}</div><div class="lbl">Total Chapter</div></div>
       <div class="stat"><div class="val">{extracted}</div><div class="lbl">Buku Terekstrak</div></div>
+      <div class="stat"><div class="val">{pending_extract}</div><div class="lbl">Pending Ekstrak</div></div>
+      <div class="stat"><div class="val">{ai_generated}</div><div class="lbl">AI Generated</div></div>
     </div>
     <div class="card">
       <div class="card-title">Aksi Cepat</div>
@@ -628,7 +943,13 @@ async def dashboard(
       &nbsp;&nbsp;
       <a href="/books" class="btn btn-secondary">📚 Daftar Buku</a>
       &nbsp;&nbsp;
+      <a href="/pipeline" class="btn btn-secondary">🚀 Pipeline</a>
+      &nbsp;&nbsp;
       <a href="/settings" class="btn btn-secondary">⚙️ Pengaturan</a>
+    </div>
+    <div class="card">
+      <div class="card-title">Job Terbaru <a href="/pipeline" style="font-size:.8rem;color:#2563eb;font-weight:400;float:right">Lihat semua →</a></div>
+      {jobs_section}
     </div>"""
     return _page("Dashboard", body, "dash", msg, msg_type)
 
@@ -795,7 +1116,12 @@ async def add_book_form(
 
 
 @app.get("/books/{slug}", response_class=HTMLResponse)
-async def book_detail(slug: str, _: Auth) -> HTMLResponse:
+async def book_detail(
+    slug: str,
+    _: Auth,
+    msg: str = "",
+    msg_type: str = Query(default="success", alias="type"),
+) -> HTMLResponse:
     async with get_session() as session:
         result = await session.execute(select(Book).where(Book.slug == slug))
         book = result.scalar_one_or_none()
@@ -849,16 +1175,19 @@ async def book_detail(slug: str, _: Auth) -> HTMLResponse:
       <div class="card-title">Chapter ({len(chapters)})</div>
       {ch_section}
     </div>
-    <div style="display:flex;gap:.75rem;align-items:center">
+    <div style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap">
       <form method="post" action="/books/{_esc(book.slug)}/download" style="display:inline">
         <button class="btn btn-warning" type="submit">⬇ Unduh PDF</button>
       </form>
       <form method="post" action="/books/{_esc(book.slug)}/extract" style="display:inline">
         <button class="btn btn-success" type="submit">🔍 Ekstrak Chapter</button>
       </form>
+      <form method="post" action="/books/{_esc(book.slug)}/regenerate" style="display:inline">
+        <button class="btn btn-secondary" type="submit">✨ Regenerate AI</button>
+      </form>
       <a href="/books" class="btn btn-secondary">← Kembali</a>
     </div>"""
-    return _page(f"Detail: {book.title or slug}", body, "books")
+    return _page(f"Detail: {book.title or slug}", body, "books", msg, msg_type)
 
 
 # ---------------------------------------------------------------------------
@@ -978,6 +1307,40 @@ async def trigger_extract(
     return _redirect(
         "/books", f"Ekstraksi chapter untuk '{slug}' dimulai.", "info"
     )
+
+
+# ---------------------------------------------------------------------------
+# Regenerate AI (POST)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/books/{slug}/regenerate")
+async def regenerate_ai(
+    slug: str, _: Auth, background_tasks: BackgroundTasks
+) -> RedirectResponse:
+    async with get_session() as session:
+        book = (
+            await session.execute(select(Book).where(Book.slug == slug))
+        ).scalar_one_or_none()
+        if book is None:
+            return _redirect("/books", "Buku tidak ditemukan.", "error")
+
+        # Use the slug from the DB record (not raw user input) for the redirect
+        book_slug = book.slug
+
+        # Delete existing GeneratedContent for this book
+        existing = (
+            await session.execute(
+                select(GeneratedContent).where(GeneratedContent.book_id == book.id)
+            )
+        ).scalar_one_or_none()
+        if existing:
+            await session.delete(existing)
+            await session.commit()
+
+    job_id = await log_job("generate_ai", slug=book_slug)
+    background_tasks.add_task(run_generate_for_book, job_id, book_slug)
+    return _redirect(f"/books/{book_slug}", "Regenerasi AI dimulai.", "info")
 
 
 # ---------------------------------------------------------------------------

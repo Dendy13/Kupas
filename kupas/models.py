@@ -58,3 +58,22 @@ class GeneratedContent(Base):
     questions_json: Mapped[str] = mapped_column(Text)  # JSON array string
     generated_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
     book: Mapped["Book"] = relationship("Book", back_populates="generated_content")
+
+
+class JobLog(Base):
+    """Tracks background job execution status."""
+    __tablename__ = "job_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    job_type: Mapped[str]          # "fetch_catalog", "download_pdf",
+                                   # "extract_text", "generate_ai"
+    slug: Mapped[str | None]       # None = bulk job
+    status: Mapped[str]            # "pending", "running", "done", "error"
+    message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
