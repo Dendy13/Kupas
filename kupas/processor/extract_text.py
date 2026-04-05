@@ -8,53 +8,20 @@ import argparse
 import asyncio
 import gc
 import logging
-import os
 import re
 from pathlib import Path
 
 import fitz  # PyMuPDF
-from dotenv import load_dotenv
-from sqlalchemy import ForeignKey, Text, select, delete
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import select, delete
 
-load_dotenv()
+from kupas.models import Book, Chapter
+from kupas.database import create_tables, get_session
+
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/kupas")
-engine = create_async_engine(DATABASE_URL, echo=False)
-
 _CHAPTER_RE = re.compile(r"^(BAB\s+[\dIVXivx]+|CHAPTER\s+[\dIVXivx]+)", re.IGNORECASE)
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class Book(Base):
-    __tablename__ = "books"
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    slug: Mapped[str] = mapped_column(unique=True, index=True)
-    title: Mapped[str | None]
-    pdf_path: Mapped[str | None]
-    chapters: Mapped[list["Chapter"]] = relationship("Chapter", back_populates="book", cascade="all, delete-orphan")
-
-
-class Chapter(Base):
-    __tablename__ = "chapters"
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), index=True)
-    chapter_number: Mapped[int]
-    title: Mapped[str | None]
-    content: Mapped[str | None] = mapped_column(Text)
-    book: Mapped["Book"] = relationship("Book", back_populates="chapters")
-
-
-async def create_tables() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
 
 
 def _is_chapter_heading(line: str) -> bool:
@@ -70,7 +37,7 @@ def _is_chapter_heading(line: str) -> bool:
 
 async def process_book(slug: str) -> None:
     """Ekstrak teks PDF halaman per halaman, simpan langsung ke DB."""
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         result = await session.execute(select(Book).where(Book.slug == slug))
         book = result.scalar_one_or_none()
         if book is None:
@@ -83,7 +50,7 @@ async def process_book(slug: str) -> None:
         pdf_path = book.pdf_path
 
     # Hapus chapter lama dulu
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         await session.execute(delete(Chapter).where(Chapter.book_id == book_id))
         await session.commit()
 
@@ -103,7 +70,7 @@ async def process_book(slug: str) -> None:
         content = "\n".join(lines).strip()
         if not content:
             return
-        async with AsyncSession(engine) as s:
+        async with get_session() as s:
             s.add(Chapter(
                 book_id=book_id,
                 chapter_number=index,
@@ -142,7 +109,7 @@ async def process_book(slug: str) -> None:
 
 
 async def process_all() -> None:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         result = await session.execute(select(Book.slug).where(Book.pdf_path.isnot(None)))
         slugs = [row[0] for row in result.fetchall()]
     logger.info("Memproses %d buku...", len(slugs))

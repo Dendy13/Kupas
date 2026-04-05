@@ -18,7 +18,6 @@ Credentials are read from ADMIN_USER / ADMIN_PASSWORD environment variables.
 
 import ipaddress
 import logging
-import os
 import re
 import secrets
 from contextlib import asynccontextmanager
@@ -27,33 +26,24 @@ from typing import Annotated, AsyncGenerator
 from urllib.parse import urlencode, urlparse
 
 import httpx
-from dotenv import load_dotenv
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
-from sqlalchemy import Text, func, select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import func, select
 
-load_dotenv()
+from kupas.config import (
+    ADMIN_USER,
+    ADMIN_PASSWORD,
+    PDF_STORAGE_DIR,
+    ADMIN_CORS_ORIGINS,
+    ENV_FILE_PATH,
+)
+from kupas.models import Book, Chapter
+from kupas.database import engine, create_tables, get_session
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/kupas"
-)
-ADMIN_USER = os.getenv("ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme")
-PDF_STORAGE_DIR = Path(os.getenv("PDF_STORAGE_DIR", "kupas/storage/pdf"))
-_raw_cors = os.getenv("ADMIN_CORS_ORIGINS", "")
-ADMIN_CORS_ORIGINS: list[str] = [o.strip() for o in _raw_cors.split(",") if o.strip()]
-ENV_FILE_PATH = Path(os.path.abspath(os.getenv("ENV_FILE_PATH", ".env")))
 
 # Env vars exposed in the Settings UI — (key, label, is_sensitive)
 MANAGED_ENV_VARS: list[tuple[str, str, bool]] = [
@@ -70,8 +60,6 @@ MANAGED_ENV_VARS: list[tuple[str, str, bool]] = [
 
 # Slugs reserved by admin routes — disallowed as book slugs
 _RESERVED_SLUGS = {"add", "new", "delete", "edit", "list"}
-
-engine = create_async_engine(DATABASE_URL, echo=False)
 
 # ---------------------------------------------------------------------------
 # Authentication
@@ -95,47 +83,13 @@ def require_auth(credentials: HTTPBasicCredentials = Depends(_security)) -> str:
 Auth = Annotated[str, Depends(require_auth)]
 
 # ---------------------------------------------------------------------------
-# ORM Models (mirrors kupas.api.main — kept separate for independence)
-# ---------------------------------------------------------------------------
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class Book(Base):
-    __tablename__ = "books"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    slug: Mapped[str] = mapped_column(unique=True, index=True)
-    title: Mapped[str | None]
-    author: Mapped[str | None]
-    subject: Mapped[str | None]
-    grade: Mapped[str | None]
-    cover_url: Mapped[str | None]
-    pdf_url: Mapped[str | None]
-    pdf_path: Mapped[str | None]
-
-
-class Chapter(Base):
-    __tablename__ = "chapters"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    book_id: Mapped[int] = mapped_column(index=True)
-    chapter_number: Mapped[int]
-    title: Mapped[str | None]
-    content: Mapped[str | None] = mapped_column(Text)
-
-
-# ---------------------------------------------------------------------------
 # App lifespan
 # ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    await create_tables()
     yield
     await engine.dispose()
 
@@ -189,7 +143,7 @@ class StatsSchema(BaseModel):
 
 @api_router.get("/stats", response_model=StatsSchema, summary="Admin stats (JSON)")
 async def api_stats(_: Auth) -> StatsSchema:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         total = (
             await session.execute(select(func.count()).select_from(Book))
         ).scalar_one()
@@ -217,7 +171,7 @@ async def api_stats(_: Auth) -> StatsSchema:
 
 @api_router.get("/books", response_model=list[BookSchema], summary="List books (JSON)")
 async def api_list_books(_: Auth) -> list[BookSchema]:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         result = await session.execute(select(Book).order_by(Book.title))
         books = result.scalars().all()
     return [BookSchema.model_validate(b) for b in books]
@@ -230,7 +184,7 @@ async def api_list_books(_: Auth) -> list[BookSchema]:
 async def api_trigger_download(
     slug: str, _: Auth, background_tasks: BackgroundTasks
 ) -> JSONResponse:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         book = (
             await session.execute(select(Book).where(Book.slug == slug))
         ).scalar_one_or_none()
@@ -251,7 +205,7 @@ async def api_trigger_download(
 async def api_trigger_extract(
     slug: str, _: Auth, background_tasks: BackgroundTasks
 ) -> JSONResponse:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         book = (
             await session.execute(select(Book).where(Book.slug == slug))
         ).scalar_one_or_none()
@@ -268,7 +222,7 @@ async def api_trigger_extract(
 
 @api_router.delete("/books/{slug}", summary="Delete a book (JSON)")
 async def api_delete_book(slug: str, _: Auth) -> JSONResponse:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         book = (
             await session.execute(select(Book).where(Book.slug == slug))
         ).scalar_one_or_none()
@@ -381,7 +335,7 @@ async def _stream_download(slug: str, pdf_url: str) -> Path:
 
 async def _bg_download(slug: str) -> None:
     """Download the PDF for a book that already has pdf_url set."""
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         result = await session.execute(select(Book).where(Book.slug == slug))
         book = result.scalar_one_or_none()
         if not book or not book.pdf_url:
@@ -642,7 +596,7 @@ async def dashboard(
     msg: str = "",
     msg_type: str = Query(default="success", alias="type"),
 ) -> HTMLResponse:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         total = (
             await session.execute(select(func.count()).select_from(Book))
         ).scalar_one()
@@ -690,7 +644,7 @@ async def book_list(
     msg: str = "",
     msg_type: str = Query(default="success", alias="type"),
 ) -> HTMLResponse:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         books_result = await session.execute(select(Book).order_by(Book.title))
         books = books_result.scalars().all()
 
@@ -842,7 +796,7 @@ async def add_book_form(
 
 @app.get("/books/{slug}", response_class=HTMLResponse)
 async def book_detail(slug: str, _: Auth) -> HTMLResponse:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         result = await session.execute(select(Book).where(Book.slug == slug))
         book = result.scalar_one_or_none()
         if book is None:
@@ -945,7 +899,7 @@ async def add_book(
     except ValueError as exc:
         return _redirect("/books/add", f"URL PDF tidak valid: {exc}", "error")
 
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         existing = (
             await session.execute(select(Book).where(Book.slug == slug))
         ).scalar_one_or_none()
@@ -985,7 +939,7 @@ async def add_book(
 async def trigger_download(
     slug: str, _: Auth, background_tasks: BackgroundTasks
 ) -> RedirectResponse:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         book = (
             await session.execute(select(Book).where(Book.slug == slug))
         ).scalar_one_or_none()
@@ -1009,7 +963,7 @@ async def trigger_download(
 async def trigger_extract(
     slug: str, _: Auth, background_tasks: BackgroundTasks
 ) -> RedirectResponse:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         book = (
             await session.execute(select(Book).where(Book.slug == slug))
         ).scalar_one_or_none()
@@ -1033,7 +987,7 @@ async def trigger_extract(
 
 @app.post("/books/{slug}/delete")
 async def delete_book(slug: str, _: Auth) -> RedirectResponse:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         book = (
             await session.execute(select(Book).where(Book.slug == slug))
         ).scalar_one_or_none()

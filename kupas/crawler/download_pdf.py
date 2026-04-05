@@ -15,46 +15,18 @@ Usage:
 import argparse
 import asyncio
 import logging
-import os
 from pathlib import Path
 
 import httpx
-from dotenv import load_dotenv
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-load_dotenv()
+from kupas.config import DETAIL_API_URL, PDF_STORAGE_DIR
+from kupas.models import Book
+from kupas.database import get_session
+
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
-
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/kupas")
-DETAIL_API_URL = os.getenv(
-    "DETAIL_API_URL",
-    "https://api.buku.cloudapp.web.id/getDetails",
-)
-PDF_STORAGE_DIR = Path(os.getenv("PDF_STORAGE_DIR", "kupas/storage/pdf"))
-
-engine = create_async_engine(DATABASE_URL, echo=False)
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class Book(Base):
-    __tablename__ = "books"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    slug: Mapped[str] = mapped_column(unique=True, index=True)
-    title: Mapped[str | None]
-    author: Mapped[str | None]
-    subject: Mapped[str | None]
-    grade: Mapped[str | None]
-    cover_url: Mapped[str | None]
-    pdf_url: Mapped[str | None]
-    pdf_path: Mapped[str | None]
 
 
 async def fetch_detail(slug: str) -> dict:
@@ -93,7 +65,7 @@ async def download_pdf(slug: str, pdf_url: str) -> Path:
 
 async def process_slug(slug: str) -> None:
     """Fetch detail, download PDF, and update the database for a single slug."""
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         result = await session.execute(select(Book).where(Book.slug == slug))
         book = result.scalar_one_or_none()
         if book is None:
@@ -119,7 +91,7 @@ async def process_slug(slug: str) -> None:
 
 async def process_all() -> None:
     """Download PDFs for all books that are missing a local file."""
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         result = await session.execute(select(Book.slug))
         slugs = [row[0] for row in result.fetchall()]
 
