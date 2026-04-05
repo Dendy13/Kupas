@@ -3,7 +3,7 @@ main.py
 FastAPI application for the Kupas platform.
 """
 
-import os
+import json
 import re
 import secrets
 from contextlib import asynccontextmanager
@@ -12,63 +12,26 @@ from typing import AsyncGenerator
 # Beralih ke SDK yang baru
 from google import genai
 import httpx
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-from sqlalchemy import Text, select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/kupas")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite") # Pakai model yang lebih efisien dan murah
-GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "")
-GCP_REGION = os.getenv("GCP_REGION", "asia-southeast1")
-DETAIL_API_URL = os.getenv(
-    "DETAIL_API_URL",
-    "https://api.buku.cloudapp.web.id/getDetails",
+from kupas.config import (
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    GCP_PROJECT_ID,
+    GCP_REGION,
+    DETAIL_API_URL,
+    VALID_API_KEYS,
+    ALLOWED_ORIGINS,
 )
-
-_raw_api_keys = os.getenv("API_KEYS", "")
-VALID_API_KEYS: set[str] = {k.strip() for k in _raw_api_keys.split(",") if k.strip()}
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "https://kupas.dendyfajark.page")
-ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
-
-engine = create_async_engine(DATABASE_URL, echo=False)
-
-# ---------------------------------------------------------------------------
-# ORM Models
-# ---------------------------------------------------------------------------
-
-class Base(DeclarativeBase):
-    pass
-
-class Book(Base):
-    __tablename__ = "books"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    slug: Mapped[str] = mapped_column(unique=True, index=True)
-    title: Mapped[str | None]
-    author: Mapped[str | None]
-    subject: Mapped[str | None]
-    grade: Mapped[str | None]
-    cover_url: Mapped[str | None]
-    pdf_url: Mapped[str | None]
-    pdf_path: Mapped[str | None]
-
-class Chapter(Base):
-    __tablename__ = "chapters"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    book_id: Mapped[int] = mapped_column(index=True)
-    chapter_number: Mapped[int]
-    title: Mapped[str | None]
-    content: Mapped[str | None] = mapped_column(Text)
+from kupas.models import Book, Chapter, GeneratedContent
+from kupas.database import engine, create_tables, get_session
 
 # ---------------------------------------------------------------------------
 # Pydantic Schemas
@@ -105,8 +68,7 @@ class GenerateOut(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    await create_tables()
     yield
     await engine.dispose()
 
@@ -165,14 +127,14 @@ async def root():
 
 @app.get("/books", response_model=list[BookOut], summary="List all books", dependencies=[Depends(require_api_key)])
 async def list_books() -> list[BookOut]:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         result = await session.execute(select(Book).order_by(Book.title))
         books = result.scalars().all()
     return [BookOut.model_validate(b) for b in books]
 
 @app.get("/books/{slug}", response_model=BookDetailOut, summary="Get book detail with chapters", dependencies=[Depends(require_api_key)])
 async def get_book(slug: str) -> BookDetailOut:
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         book = await get_book_or_404(session, slug)
         chapters_result = await session.execute(
             select(Chapter)
@@ -193,20 +155,31 @@ async def generate(slug: str) -> GenerateOut:
             detail="GEMINI_API_KEY is not configured.",
         )
 
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         book = await get_book_or_404(session, slug)
-        chapters_result = await session.execute(
-            select(Chapter)
-            .where(Chapter.book_id == book.id)
-            .order_by(Chapter.chapter_number)
-        )
-        chapters = chapters_result.scalars().all()
 
-    if not chapters:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No chapters found for book '{slug}'. Run the extractor first.",
-        )
+        # Check cache first
+        cached = (await session.execute(
+            select(GeneratedContent).where(GeneratedContent.book_id == book.id)
+        )).scalar_one_or_none()
+
+        if cached:
+            return GenerateOut(
+                slug=slug,
+                summary=cached.summary,
+                questions=json.loads(cached.questions_json),
+            )
+
+        # Cache miss — load chapters
+        chapters = (await session.execute(
+            select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.chapter_number)
+        )).scalars().all()
+
+        if not chapters:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No chapters found for book '{slug}'. Run the extractor first.",
+            )
 
     combined_text = "\n\n".join(
         f"[{ch.title}]\n{(ch.content or '')[:3000]}" for ch in chapters
@@ -227,13 +200,11 @@ async def generate(slug: str) -> GenerateOut:
 
     try:
         # Gunakan Vertex AI jika GCP_PROJECT_ID tersedia, fallback ke API key
-        gcp_project = os.getenv("GCP_PROJECT_ID", "")
-        gcp_region = os.getenv("GCP_REGION", "asia-southeast1")
-        if gcp_project:
-            client = genai.Client(vertexai=True, project=gcp_project, location=gcp_region)
+        if GCP_PROJECT_ID:
+            client = genai.Client(vertexai=True, project=GCP_PROJECT_ID, location=GCP_REGION)
         else:
             client = genai.Client(api_key=GEMINI_API_KEY)
-        
+
         # Menggunakan client asynchronous bawaan google-genai
         summary_response = await client.aio.models.generate_content(
             model=GEMINI_MODEL,
@@ -243,7 +214,7 @@ async def generate(slug: str) -> GenerateOut:
             model=GEMINI_MODEL,
             contents=questions_prompt,
         )
-        
+
         summary_text = summary_response.text.strip() if summary_response.text else ""
         raw_questions = questions_response.text.strip() if questions_response.text else ""
 
@@ -255,5 +226,17 @@ async def generate(slug: str) -> GenerateOut:
         for q in re.split(r"\n(?=\d+[\.\)])", raw_questions)
         if q.strip()
     ]
+
+    # Save to cache (ignore duplicate in case of concurrent requests)
+    async with get_session() as session:
+        try:
+            session.add(GeneratedContent(
+                book_id=book.id,
+                summary=summary_text,
+                questions_json=json.dumps(question_list, ensure_ascii=False),
+            ))
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
 
     return GenerateOut(slug=slug, summary=summary_text, questions=question_list)

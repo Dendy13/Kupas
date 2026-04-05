@@ -9,55 +9,18 @@ Usage:
 
 import asyncio
 import logging
-import os
 from datetime import datetime, timezone
 
 import httpx
-from dotenv import load_dotenv
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-load_dotenv()
+from kupas.config import CATALOG_API_URL
+from kupas.models import Book
+from kupas.database import create_tables, get_session
+
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
-
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/kupas")
-CATALOG_API_URL = os.getenv(
-    "CATALOG_API_URL",
-    "https://api.buku.cloudapp.web.id/getPenggerakTextBooks",
-)
-
-engine = create_async_engine(DATABASE_URL, echo=False)
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class Book(Base):
-    __tablename__ = "books"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    slug: Mapped[str] = mapped_column(unique=True, index=True)
-    title: Mapped[str | None]
-    author: Mapped[str | None]
-    subject: Mapped[str | None]
-    grade: Mapped[str | None]
-    cover_url: Mapped[str | None]
-    pdf_url: Mapped[str | None]
-    pdf_path: Mapped[str | None]
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
-    )
-
-
-async def create_tables() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
 
 
 async def fetch_catalog() -> list[dict]:
@@ -76,7 +39,7 @@ async def fetch_catalog() -> list[dict]:
 
 async def upsert_books(books: list[dict]) -> None:
     """Insert or update books in the database."""
-    async with AsyncSession(engine) as session:
+    async with get_session() as session:
         for item in books:
             slug = item.get("slug") or item.get("id")
             if not slug:
