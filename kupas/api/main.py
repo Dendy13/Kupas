@@ -27,6 +27,8 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/kupas")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite") # Pakai model yang lebih efisien dan murah
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "")
+GCP_REGION = os.getenv("GCP_REGION", "asia-southeast1")
 DETAIL_API_URL = os.getenv(
     "DETAIL_API_URL",
     "https://api.buku.cloudapp.web.id/getDetails",
@@ -224,8 +226,13 @@ async def generate(slug: str) -> GenerateOut:
     )
 
     try:
-        # Inisialisasi client API terbaru
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        # Gunakan Vertex AI jika GCP_PROJECT_ID tersedia, fallback ke API key
+        gcp_project = os.getenv("GCP_PROJECT_ID", "")
+        gcp_region = os.getenv("GCP_REGION", "asia-southeast1")
+        if gcp_project:
+            client = genai.Client(vertexai=True, project=gcp_project, location=gcp_region)
+        else:
+            client = genai.Client(api_key=GEMINI_API_KEY)
         
         # Menggunakan client asynchronous bawaan google-genai
         summary_response = await client.aio.models.generate_content(

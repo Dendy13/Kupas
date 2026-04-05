@@ -34,6 +34,9 @@ services:
     env_file: .env
     volumes:
       - pdf_storage:/app/kupas/storage/pdf
+      - ./gcp-kupas.json:/app/gcp-kupas.json:ro
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-kupas.json
     restart: unless-stopped
     depends_on:
       postgres:
