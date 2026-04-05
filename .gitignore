@@ -46,3 +46,7 @@ htmlcov/
 
 # Alembic
 alembic/versions/
+
+# GCP Service Account Key — JANGAN PERNAH COMMIT
+gcp-kupas.json
+*.json.key
