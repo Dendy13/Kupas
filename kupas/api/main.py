@@ -18,6 +18,7 @@ from fastapi.security import APIKeyHeader
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kupas.config import (
@@ -174,11 +175,11 @@ async def generate(slug: str) -> GenerateOut:
             select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.chapter_number)
         )).scalars().all()
 
-    if not chapters:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No chapters found for book '{slug}'. Run the extractor first.",
-        )
+        if not chapters:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No chapters found for book '{slug}'. Run the extractor first.",
+            )
 
     combined_text = "\n\n".join(
         f"[{ch.title}]\n{(ch.content or '')[:3000]}" for ch in chapters
@@ -226,13 +227,16 @@ async def generate(slug: str) -> GenerateOut:
         if q.strip()
     ]
 
-    # Save to cache
+    # Save to cache (ignore duplicate in case of concurrent requests)
     async with get_session() as session:
-        session.add(GeneratedContent(
-            book_id=book.id,
-            summary=summary_text,
-            questions_json=json.dumps(question_list, ensure_ascii=False),
-        ))
-        await session.commit()
+        try:
+            session.add(GeneratedContent(
+                book_id=book.id,
+                summary=summary_text,
+                questions_json=json.dumps(question_list, ensure_ascii=False),
+            ))
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
 
     return GenerateOut(slug=slug, summary=summary_text, questions=question_list)
