@@ -748,7 +748,7 @@ async def pipeline_page(_: Auth) -> HTMLResponse:
       try {
         const resp = await fetch('/api/v1/pipeline/' + step, {
           method: 'POST',
-          headers: {'Authorization': 'Basic ' + btoa(document.cookie.match(/auth=([^;]+)/)?.[1] || ':')}
+          credentials: 'same-origin',
         });
         const data = await resp.json();
         if (resp.ok) {
@@ -1325,6 +1325,9 @@ async def regenerate_ai(
         if book is None:
             return _redirect("/books", "Buku tidak ditemukan.", "error")
 
+        # Use the slug from the DB record (not raw user input) for the redirect
+        book_slug = book.slug
+
         # Delete existing GeneratedContent for this book
         existing = (
             await session.execute(
@@ -1335,9 +1338,9 @@ async def regenerate_ai(
             await session.delete(existing)
             await session.commit()
 
-    job_id = await log_job("generate_ai", slug=slug)
-    background_tasks.add_task(run_generate_for_book, job_id, slug)
-    return _redirect(f"/books/{slug}", "Regenerasi AI dimulai.", "info")
+    job_id = await log_job("generate_ai", slug=book_slug)
+    background_tasks.add_task(run_generate_for_book, job_id, book_slug)
+    return _redirect(f"/books/{book_slug}", "Regenerasi AI dimulai.", "info")
 
 
 # ---------------------------------------------------------------------------

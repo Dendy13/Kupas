@@ -126,11 +126,12 @@ async def run_extract_text(job_id: int, slug: str) -> None:
             book = result.scalar_one_or_none()
             chapter_count = 0
             if book:
-                chapter_count = (
+                chapters_result = (
                     await session.execute(
                         select(Chapter).where(Chapter.book_id == book.id)
                     )
-                ).scalars().all().__len__()
+                ).scalars().all()
+                chapter_count = len(chapters_result)
         await update_job(job_id, "done", f"Extracted {chapter_count} chapters")
     except Exception as exc:
         logger.exception("run_extract_text failed for '%s'", slug)
@@ -165,7 +166,7 @@ async def run_extract_all(job_id: int) -> None:
         await update_job(job_id, "error", str(exc))
 
 
-async def _generate_for_book(book: Book, session_factory=None) -> tuple[str, list[str]]:
+async def _generate_for_book(book: Book) -> tuple[str, list[str]]:
     """Call Gemini to generate summary and questions for a single book."""
     from google import genai
 
