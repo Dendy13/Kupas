@@ -29,3 +29,9 @@ VALID_API_KEYS: set[str] = {k.strip() for k in _raw_api_keys.split(",") if k.str
 
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "https://kupas.dendyfajark.page")
 ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
+# Ollama / Qwen
+OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434/v1")
+OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+USE_OLLAMA: bool = os.getenv("USE_OLLAMA", "true").lower() == "true"
+OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "120"))

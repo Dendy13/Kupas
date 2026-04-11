@@ -7,6 +7,7 @@ networks:
 volumes:
   pdf_storage:
   postgres_data:
+  ollama_data:
 
 services:
   postgres:
@@ -37,10 +38,35 @@ services:
       - ./gcp-kupas.json:/app/gcp-kupas.json:ro
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-kupas.json
+      - USE_OLLAMA=true
+      - OLLAMA_BASE_URL=http://ollama:11434/v1
+      - OLLAMA_MODEL=qwen2.5:7b
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - kupas-net
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: kupas-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
     networks:
       - kupas-net
 
