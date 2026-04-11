@@ -178,7 +178,10 @@ function ChunkEditor({
               Pisah di kursor
             </button>
             <button
-              onClick={() => { setDraft(chunk.content ?? ''); setEditingContent(false) }}
+              onClick={() => {
+                setDraft(chunk.content ?? '')
+                setEditingContent(false)
+              }}
               className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50"
             >
               Batal
@@ -263,16 +266,6 @@ export default function ExtractionVerifier({ session: initialSession, onApproved
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [selectedIdx, chunks])
-
-  // Auto-save draft every 30s — deliberately uses an empty dep array because
-  // we only want this to register once on mount. The effect body performs
-  // a background status update that does not depend on the current chunk state.
-  useEffect(() => {
-    const t = setInterval(() => {
-      // Future: PATCH session status to "in_review"
-    }, 30_000)
-    return () => clearInterval(t)
-  }, [])
 
   const handleUpdate = useCallback((updated: ExtractionChunk) => {
     setChunks((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
