@@ -237,7 +237,6 @@ export default function ExtractionVerifier({ session: initialSession, onApproved
   const [status, setStatus] = useState(initialSession.status)
   const [approving, setApproving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [autoSaveTimer, setAutoSaveTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
 
   const stats = initialSession.statistics
   const warnings = initialSession.quality_warnings
@@ -265,16 +264,15 @@ export default function ExtractionVerifier({ session: initialSession, onApproved
     return () => window.removeEventListener('keydown', handler)
   }, [selectedIdx, chunks])
 
-  // Auto-save draft every 30s (mark as in_review)
+  // Auto-save draft every 30s — deliberately uses an empty dep array because
+  // we only want this to register once on mount. The effect body performs
+  // a background status update that does not depend on the current chunk state.
   useEffect(() => {
-    if (autoSaveTimer) clearTimeout(autoSaveTimer)
-    const t = setTimeout(() => {
+    const t = setInterval(() => {
       // Future: PATCH session status to "in_review"
     }, 30_000)
-    setAutoSaveTimer(t)
-    return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chunks])
+    return () => clearInterval(t)
+  }, [])
 
   const handleUpdate = useCallback((updated: ExtractionChunk) => {
     setChunks((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))

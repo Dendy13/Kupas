@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createExtraction, getExtraction, previewExtraction } from '@/lib/api'
 import type { ExtractionPreviewResponse, ExtractionSession } from '@/types'
@@ -22,15 +22,28 @@ export default function VerifyExtractionPage({ params }: PageProps) {
   const [sessionId, setSessionId] = useState<string>('')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  // Allow loading an existing session by ID
+  const loadSession = useCallback(async (sid: number) => {
+    setViewState('loading_session')
+    setErrorMsg(null)
+    try {
+      const result: ExtractionSession = await getExtraction(sid)
+      setSession(result)
+      setViewState('session_loaded')
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Gagal memuat sesi ekstraksi.')
+      setViewState('error')
+    }
+  }, [])
+
+  // Allow loading an existing session by ID from query string
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const sid = params.get('session')
+    const qp = new URLSearchParams(window.location.search)
+    const sid = qp.get('session')
     if (sid) {
       setSessionId(sid)
       loadSession(parseInt(sid, 10))
     }
-  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loadSession])
 
   async function handlePreview() {
     setViewState('previewing')
@@ -56,19 +69,6 @@ export default function VerifyExtractionPage({ params }: PageProps) {
       window.history.replaceState(null, '', `?session=${result.id}`)
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Gagal membuat sesi ekstraksi.')
-      setViewState('error')
-    }
-  }
-
-  async function loadSession(sid: number) {
-    setViewState('loading_session')
-    setErrorMsg(null)
-    try {
-      const result: ExtractionSession = await getExtraction(sid)
-      setSession(result)
-      setViewState('session_loaded')
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Gagal memuat sesi ekstraksi.')
       setViewState('error')
     }
   }
@@ -124,7 +124,7 @@ export default function VerifyExtractionPage({ params }: PageProps) {
 
             {/* Create new session */}
             <div className="rounded-xl border border-blue-200 bg-blue-50 p-5 space-y-3">
-              <h2 className="font-semibold text-gray-900">⚡ Ekstrak & Simpan</h2>
+              <h2 className="font-semibold text-gray-900">⚡ Ekstrak &amp; Simpan</h2>
               <p className="text-sm text-gray-500">
                 Jalankan ekstraksi dan simpan sesi baru ke database untuk diedit.
               </p>

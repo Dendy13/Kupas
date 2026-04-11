@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kupas.api.schemas.extraction import (
@@ -44,8 +44,6 @@ from kupas.api.schemas.extraction import (
 from kupas.database import get_session
 from kupas.models import Book, Chapter, ExtractionChunk, ExtractionSession
 from kupas.processor.pdf_extractor import PDFExtractor, PDFExtractionError
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["extraction"])
 
@@ -469,9 +467,6 @@ async def approve_extraction(session_id: int) -> ApproveExtractionResponse:
             )
 
         # Replace book's chapters with extraction chunks
-        from kupas.models import Chapter  # local import to avoid circular deps
-        from sqlalchemy import delete as sa_delete
-
         await db.execute(
             sa_delete(Chapter).where(Chapter.book_id == ext_session.book_id)
         )

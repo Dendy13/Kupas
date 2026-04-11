@@ -245,7 +245,7 @@ class PDFExtractor:
     def _detect_noise(self, pages_lines: List[List[str]]) -> set:
         """
         Return a set of lines that appear on many pages (likely headers/footers).
-        Only considers short lines (< 15 chars after stripping).
+        Only considers short lines (< 40 chars after stripping).
         """
         total_pages = len(pages_lines)
         if total_pages < 3:
