@@ -61,6 +61,52 @@ class GeneratedContent(Base):
     book: Mapped["Book"] = relationship("Book", back_populates="generated_content")
 
 
+class ExtractionSession(Base):
+    """Tracks one PDF extraction run for a book."""
+    __tablename__ = "extraction_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), index=True)
+    status: Mapped[str] = mapped_column(default="draft")  # draft | in_review | approved | rejected
+    total_pages: Mapped[int | None]
+    total_chunks: Mapped[int | None]
+    approved_by: Mapped[int | None]
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    book: Mapped["Book"] = relationship("Book")
+    chunks: Mapped[list["ExtractionChunk"]] = relationship(
+        "ExtractionChunk", back_populates="session", cascade="all, delete-orphan",
+        order_by="ExtractionChunk.order_index",
+    )
+
+
+class ExtractionChunk(Base):
+    """A single verified content chunk from an extraction session."""
+    __tablename__ = "extraction_chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("extraction_sessions.id"), index=True)
+    title: Mapped[str | None]
+    content: Mapped[str | None] = mapped_column(Text)
+    start_page: Mapped[int | None]
+    end_page: Mapped[int | None]
+    char_count: Mapped[int | None]
+    word_count: Mapped[int | None]
+    quality_score: Mapped[float | None]
+    is_verified: Mapped[bool] = mapped_column(default=False)
+    verified_by: Mapped[int | None]
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    order_index: Mapped[int] = mapped_column(default=0)
+    session: Mapped["ExtractionSession"] = relationship("ExtractionSession", back_populates="chunks")
+
+
 class JobLog(Base):
     """Tracks background job execution status."""
     __tablename__ = "job_logs"
