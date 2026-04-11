@@ -10,7 +10,9 @@ interface Props {
 
 export function ChunkVerifier({ bookId, initialSession }: Props) {
   const [session, setSession] = useState<ExtractionSession | null>(initialSession)
-  const [chunks, setChunks] = useState<ExtractionChunk[]>(initialSession?.chunks ?? [])
+  const normalizeChunks = (raw: ExtractionChunk[]) =>
+    raw.map((c) => ({ ...c, char_count: c.char_count ?? c.content.length }))
+  const [chunks, setChunks] = useState<ExtractionChunk[]>(normalizeChunks(initialSession?.chunks ?? []))
   const [selectedId, setSelectedId] = useState<number | null>(
     initialSession?.chunks[0]?.id ?? null
   )
@@ -26,7 +28,7 @@ export function ChunkVerifier({ bookId, initialSession }: Props) {
   // -------------------------------------------------------------------------
   const patchChunk = useCallback(
     async (chunk: ExtractionChunk, update: Partial<Pick<ExtractionChunk, 'title' | 'content' | 'is_verified'>>) => {
-      if (approved || chunk.id == null) return
+      if (approved || chunk.id === undefined) return
       try {
         const res = await fetch(`${apiUrl}/api/admin/books/${bookId}/chunks/${chunk.id}`, {
           method: 'PATCH',
@@ -74,7 +76,7 @@ export function ChunkVerifier({ bookId, initialSession }: Props) {
       }
       const updatedSession: ExtractionSession = await res.json()
       setSession(updatedSession)
-      setChunks(updatedSession.chunks)
+      setChunks(normalizeChunks(updatedSession.chunks))
       setStatusMsg('Ekstraksi disetujui & dikunci.')
     } catch (err) {
       setError(`Gagal menyetujui: ${String(err)}`)

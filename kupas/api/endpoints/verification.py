@@ -23,34 +23,6 @@ router = APIRouter(tags=["admin-verification"])
 # ---------------------------------------------------------------------------
 
 
-class ChunkPatchRequest(BaseModel):
-    title: Optional[str] = Field(None, min_length=1, max_length=500)
-    content: Optional[str] = Field(None, min_length=1)
-    is_verified: Optional[bool] = None
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-async def _get_latest_session(book_id: int) -> Optional[ExtractionSession]:
-    """Return the most-recently created ExtractionSession for a book, or None."""
-    async with get_session() as db:
-        result = await db.execute(
-            select(ExtractionSession)
-            .where(ExtractionSession.book_id == book_id)
-            .order_by(ExtractionSession.created_at.desc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
-
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
-
 @router.get(
     "/admin/books/{book_id}/extraction",
     response_model=Optional[ExtractionSessionOut],

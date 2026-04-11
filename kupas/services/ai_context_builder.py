@@ -35,5 +35,13 @@ class AIContextBuilder:
             return ""
         total = sum(c.char_count for c in chunks)
         if total > self.max_context_chars:
-            chunks = chunks[: int(len(chunks) * (self.max_context_chars / total))]
+            selected: List[ExtractionChunk] = []
+            accumulated = 0
+            for c in chunks:
+                if accumulated + c.char_count > self.max_context_chars:
+                    break
+                selected.append(c)
+                accumulated += c.char_count
+            # Always include at least one chunk to avoid an empty prompt
+            chunks = selected if selected else chunks[:1]
         return "\n\n".join(f"## {c.title}\n{c.content}" for c in chunks)
