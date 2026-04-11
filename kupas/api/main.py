@@ -29,7 +29,9 @@ from kupas.config import (
     DETAIL_API_URL,
     VALID_API_KEYS,
     ALLOWED_ORIGINS,
+    USE_OLLAMA,
 )
+from kupas.services.llm_client import OllamaClient
 from kupas.models import Book, Chapter, GeneratedContent
 from kupas.database import engine, create_tables, get_session
 from kupas.api.endpoints.extraction_verification import router as extraction_router
@@ -155,10 +157,10 @@ async def get_book(slug: str) -> BookDetailOut:
 
 @app.post("/books/{slug}/generate", response_model=GenerateOut, summary="Generate AI summary and practice questions", dependencies=[Depends(require_api_key)])
 async def generate(slug: str) -> GenerateOut:
-    if not GEMINI_API_KEY:
+    if not USE_OLLAMA and not GEMINI_API_KEY:
         raise HTTPException(
             status_code=503,
-            detail="GEMINI_API_KEY is not configured.",
+            detail="No AI backend configured. Set USE_OLLAMA=true or provide GEMINI_API_KEY.",
         )
 
     async with get_session() as session:
@@ -212,25 +214,48 @@ async def generate(slug: str) -> GenerateOut:
     )
 
     try:
-        # Gunakan Vertex AI jika GCP_PROJECT_ID tersedia, fallback ke API key
-        if GCP_PROJECT_ID:
-            client = genai.Client(vertexai=True, project=GCP_PROJECT_ID, location=GCP_REGION)
+        if USE_OLLAMA:
+            llm = OllamaClient()
+            try:
+                summary_system = (
+                    "Anda asisten edukasi Kemendikbud. Ringkas materi dengan bahasa Indonesia baku, "
+                    "struktur: Konsep → Penjelasan → Contoh → Poin Penting."
+                )
+                questions_system = (
+                    "Anda guru profesional. Buat 10 soal latihan pilihan ganda berbahasa Indonesia "
+                    "beserta kunci jawabannya."
+                )
+                summary_text = await llm.generate(summary_prompt, system_prompt=summary_system)
+                raw_questions = await llm.generate(questions_prompt, system_prompt=questions_system)
+            finally:
+                await llm.close()
         else:
-            client = genai.Client(api_key=GEMINI_API_KEY)
+            # Gunakan Vertex AI jika GCP_PROJECT_ID tersedia, fallback ke API key
+            if not GEMINI_API_KEY:
+                raise HTTPException(
+                    status_code=503,
+                    detail="GEMINI_API_KEY is not configured.",
+                )
+            if GCP_PROJECT_ID:
+                client = genai.Client(vertexai=True, project=GCP_PROJECT_ID, location=GCP_REGION)
+            else:
+                client = genai.Client(api_key=GEMINI_API_KEY)
 
-        # Menggunakan client asynchronous bawaan google-genai
-        summary_response = await client.aio.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=summary_prompt,
-        )
-        questions_response = await client.aio.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=questions_prompt,
-        )
+            # Menggunakan client asynchronous bawaan google-genai
+            summary_response = await client.aio.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=summary_prompt,
+            )
+            questions_response = await client.aio.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=questions_prompt,
+            )
 
-        summary_text = summary_response.text.strip() if summary_response.text else ""
-        raw_questions = questions_response.text.strip() if questions_response.text else ""
+            summary_text = summary_response.text.strip() if summary_response.text else ""
+            raw_questions = questions_response.text.strip() if questions_response.text else ""
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Generation failed: {str(e)}")
 
