@@ -16,25 +16,21 @@ engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 
 
-# Columns that were added to existing models after the initial schema was created.
-# Each entry is (table, column, column_definition).
+# DDL statements to apply when upgrading an existing schema.
+# Using literal strings (no user input) to avoid any injection risk.
 _MIGRATIONS = [
-    ("books", "created_at", "TIMESTAMP DEFAULT NOW()"),
-    ("books", "updated_at", "TIMESTAMP DEFAULT NOW()"),
-    ("job_logs", "created_at", "TIMESTAMP DEFAULT NOW()"),
-    ("job_logs", "updated_at", "TIMESTAMP DEFAULT NOW()"),
+    "ALTER TABLE books ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();",
+    "ALTER TABLE books ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();",
+    "ALTER TABLE job_logs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();",
+    "ALTER TABLE job_logs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();",
 ]
 
 
 async def upgrade_schema() -> None:
     """Add any missing columns to existing tables (idempotent)."""
     async with engine.begin() as conn:
-        for table, column, definition in _MIGRATIONS:
-            await conn.execute(
-                text(
-                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {definition};"
-                )
-            )
+        for stmt in _MIGRATIONS:
+            await conn.execute(text(stmt))
 
 
 async def create_tables() -> None:
