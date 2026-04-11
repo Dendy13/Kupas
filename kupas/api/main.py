@@ -33,6 +33,8 @@ from kupas.config import (
 from kupas.models import Book, Chapter, GeneratedContent
 from kupas.database import engine, create_tables, get_session
 from kupas.api.endpoints.extraction_verification import router as extraction_router
+from kupas.api.endpoints.verification import router as verification_router
+from kupas.services.ai_context_builder import AIContextBuilder
 
 # ---------------------------------------------------------------------------
 # Pydantic Schemas
@@ -89,6 +91,7 @@ app.add_middleware(
 )
 
 app.include_router(extraction_router, prefix="/api")
+app.include_router(verification_router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Auth dependency
@@ -173,20 +176,27 @@ async def generate(slug: str) -> GenerateOut:
                 questions=json.loads(cached.questions_json),
             )
 
-        # Cache miss — load chapters
-        chapters = (await session.execute(
-            select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.chapter_number)
-        )).scalars().all()
+        # Prefer verified+approved chunks; fall back to plain chapters
+        builder = AIContextBuilder(session)
+        verified_chunks = await builder.get_verified_chunks(book.id)
 
-        if not chapters:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No chapters found for book '{slug}'. Run the extractor first.",
+        if verified_chunks:
+            combined_text = builder.build_prompt(verified_chunks)
+        else:
+            # Cache miss — load chapters
+            chapters = (await session.execute(
+                select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.chapter_number)
+            )).scalars().all()
+
+            if not chapters:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No chapters found for book '{slug}'. Run the extractor first.",
+                )
+            combined_text = "\n\n".join(
+                f"[{ch.title}]\n{(ch.content or '')[:3000]}" for ch in chapters
             )
 
-    combined_text = "\n\n".join(
-        f"[{ch.title}]\n{(ch.content or '')[:3000]}" for ch in chapters
-    )
     book_title = book.title or slug
 
     summary_prompt = (
