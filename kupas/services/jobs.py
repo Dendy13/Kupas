@@ -245,6 +245,9 @@ async def run_generate_for_book(job_id: int, slug: str) -> None:
     except Exception as exc:
         logger.exception("run_generate_for_book failed for '%s'", slug)
         await update_job(job_id, "error", str(exc))
+
+
+async def run_generate_all(job_id: int) -> None:
     """Generate AI content for all books that have chapters but no GeneratedContent."""
     try:
         await update_job(job_id, "running")
