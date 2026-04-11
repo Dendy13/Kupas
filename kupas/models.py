@@ -4,7 +4,7 @@ Single source of truth for all SQLAlchemy ORM models.
 """
 
 from datetime import datetime, timezone
-from sqlalchemy import Text, ForeignKey
+from sqlalchemy import DateTime, Text, ForeignKey
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -24,8 +24,9 @@ class Book(Base):
     cover_url: Mapped[str | None]
     pdf_url: Mapped[str | None]
     pdf_path: Mapped[str | None]
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
