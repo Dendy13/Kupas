@@ -4,7 +4,7 @@ Single source of truth for all SQLAlchemy ORM models.
 """
 
 from datetime import datetime, timezone
-from sqlalchemy import DateTime, Text, ForeignKey
+from sqlalchemy import DateTime, Float, Index, Integer, String, Text, ForeignKey, Boolean
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -80,3 +80,60 @@ class JobLog(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class ExtractionSession(Base):
+    """Tracks a PDF extraction run for a book."""
+
+    __tablename__ = "extraction_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), nullable=False)
+    # draft | in_review | approved | rejected
+    status: Mapped[str] = mapped_column(String(50), default="draft")
+    total_pages: Mapped[int | None] = mapped_column(Integer)
+    approved_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    chunks: Mapped[list["ExtractionChunk"]] = relationship(
+        "ExtractionChunk",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="ExtractionChunk.order_index",
+    )
+
+    __table_args__ = (Index("idx_extraction_book", "book_id", "created_at"),)
+
+
+class ExtractionChunk(Base):
+    """A single logical text chunk within an ExtractionSession."""
+
+    __tablename__ = "extraction_chunks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("extraction_sessions.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    start_page: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_page: Mapped[int] = mapped_column(Integer, nullable=False)
+    char_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    word_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    quality_score: Mapped[float] = mapped_column(Float, default=0.0)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    session: Mapped["ExtractionSession"] = relationship(
+        "ExtractionSession", back_populates="chunks"
+    )
+
+    __table_args__ = (Index("idx_chunk_session_order", "session_id", "order_index"),)

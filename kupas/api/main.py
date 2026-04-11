@@ -32,6 +32,7 @@ from kupas.config import (
 )
 from kupas.models import Book, Chapter, GeneratedContent
 from kupas.database import engine, create_tables, get_session
+from kupas.api.endpoints.extraction_verification import router as extraction_router
 
 # ---------------------------------------------------------------------------
 # Pydantic Schemas
@@ -83,9 +84,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "X-API-Key"],
 )
+
+app.include_router(extraction_router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Auth dependency
